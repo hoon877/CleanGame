@@ -340,6 +340,7 @@ MonoBehaviour:
   buildOnPlay: 1
   rebuildExistingRoom: 1
   roomRootName: CozyRestore_Room
+  decorThemeFolder: gothic
 --- !u!4 &1110340262
 Transform:
   m_ObjectHideFlags: 0
