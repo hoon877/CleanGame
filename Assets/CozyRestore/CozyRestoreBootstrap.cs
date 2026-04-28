@@ -13,7 +13,8 @@ public enum CozyToolMode
     Paint,
     WindowWiper,
     Decorate,
-    Move
+    Move,
+    FloorFinish
 }
 
 public sealed class CozyRestoreBootstrap : MonoBehaviour
@@ -26,6 +27,9 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     public bool rebuildExistingRoom = true;
     public string roomRootName = "CozyRestore_Room";
     public string decorThemeFolder = "gothic";
+    private bool showingLobby;
+    private Camera lobbyCamera;
+    private Light lobbyLight;
 
     private const float RoomWidth = 14f;
     private const float RoomDepth = 11f;
@@ -58,13 +62,16 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     {
         if (buildOnPlay && Application.isPlaying)
         {
-            BuildPrototype();
+            ShowLobby();
         }
     }
 
     [ContextMenu("Build Cozy Restore Prototype")]
     public void BuildPrototype()
     {
+        showingLobby = false;
+        ClearLobbyObjects();
+
         GameObject existing = GameObject.Find(roomRootName);
         if (existing != null)
         {
@@ -94,6 +101,151 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         player.GetComponent<CozyToolController>().heldMaterial = heldMaterial;
 
         Debug.Log("CozyRestore cutaway prototype ready. Drag to orbit, WASD pan, wheel zoom, 1-5 tools.");
+    }
+
+    private void ShowLobby()
+    {
+        showingLobby = true;
+
+        GameObject existingRoom = GameObject.Find(roomRootName);
+        if (existingRoom != null && rebuildExistingRoom)
+        {
+            DestroyNow(existingRoom);
+        }
+
+        ClearLobbyObjects();
+
+        GameObject cameraObject = new GameObject("CozyRestore_LobbyCamera");
+        lobbyCamera = cameraObject.AddComponent<Camera>();
+        cameraObject.tag = "MainCamera";
+        lobbyCamera.transform.position = new Vector3(0f, 2.1f, -7.2f);
+        lobbyCamera.transform.rotation = Quaternion.Euler(12f, 0f, 0f);
+        lobbyCamera.fieldOfView = 48f;
+        lobbyCamera.clearFlags = CameraClearFlags.SolidColor;
+        lobbyCamera.backgroundColor = new Color(0.12f, 0.15f, 0.18f);
+
+        GameObject lightObject = new GameObject("CozyRestore_LobbyLight");
+        lobbyLight = lightObject.AddComponent<Light>();
+        lobbyLight.type = LightType.Directional;
+        lobbyLight.intensity = 0.65f;
+        lobbyLight.color = new Color(1f, 0.91f, 0.82f);
+        lobbyLight.transform.rotation = Quaternion.Euler(35f, -28f, 0f);
+    }
+
+    private void StartLevel(string themeFolder)
+    {
+        decorThemeFolder = themeFolder;
+        BuildPrototype();
+    }
+
+    public void ReturnToLobby()
+    {
+        GameObject existingRoom = GameObject.Find(roomRootName);
+        if (existingRoom != null)
+        {
+            DestroyNow(existingRoom);
+        }
+
+        ShowLobby();
+    }
+
+    private void ClearLobbyObjects()
+    {
+        if (lobbyCamera != null)
+        {
+            RetireLobbyObject(lobbyCamera.gameObject);
+            DestroyNow(lobbyCamera.gameObject);
+            lobbyCamera = null;
+        }
+
+        if (lobbyLight != null)
+        {
+            RetireLobbyObject(lobbyLight.gameObject);
+            DestroyNow(lobbyLight.gameObject);
+            lobbyLight = null;
+        }
+
+        GameObject oldCamera = GameObject.Find("CozyRestore_LobbyCamera");
+        if (oldCamera != null)
+        {
+            RetireLobbyObject(oldCamera);
+            DestroyNow(oldCamera);
+        }
+
+        GameObject oldLight = GameObject.Find("CozyRestore_LobbyLight");
+        if (oldLight != null)
+        {
+            RetireLobbyObject(oldLight);
+            DestroyNow(oldLight);
+        }
+    }
+
+    private void RetireLobbyObject(GameObject target)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        if (target.CompareTag("MainCamera"))
+        {
+            target.tag = "Untagged";
+        }
+
+        target.SetActive(false);
+    }
+
+    private void OnGUI()
+    {
+        if (!Application.isPlaying || !showingLobby)
+        {
+            return;
+        }
+
+        float panelWidth = Mathf.Min(520f, Screen.width - 48f);
+        float panelHeight = 330f;
+        Rect panelRect = new Rect((Screen.width - panelWidth) * 0.5f, (Screen.height - panelHeight) * 0.5f, panelWidth, panelHeight);
+
+        GUI.color = new Color(0.05f, 0.06f, 0.07f, 0.92f);
+        GUI.Box(panelRect, GUIContent.none);
+        GUI.color = Color.white;
+
+        GUILayout.BeginArea(new Rect(panelRect.x + 32f, panelRect.y + 28f, panelRect.width - 64f, panelRect.height - 56f));
+
+        GUIStyle titleStyle = new GUIStyle(GUI.skin.label);
+        titleStyle.fontSize = 34;
+        titleStyle.fontStyle = FontStyle.Bold;
+        titleStyle.alignment = TextAnchor.MiddleCenter;
+        titleStyle.normal.textColor = new Color(1f, 0.88f, 0.68f);
+        GUILayout.Label("Cozy Restore", titleStyle, GUILayout.Height(54f));
+
+        GUIStyle bodyStyle = new GUIStyle(GUI.skin.label);
+        bodyStyle.fontSize = 16;
+        bodyStyle.alignment = TextAnchor.MiddleCenter;
+        bodyStyle.wordWrap = true;
+        bodyStyle.normal.textColor = new Color(0.86f, 0.88f, 0.88f);
+        GUILayout.Label("디자인할 방의 분위기를 선택하세요.", bodyStyle, GUILayout.Height(42f));
+
+        GUILayout.Space(18f);
+
+        GUIStyle buttonStyle = new GUIStyle(GUI.skin.button);
+        buttonStyle.fontSize = 20;
+        buttonStyle.fontStyle = FontStyle.Bold;
+        if (GUILayout.Button("모던풍 레벨 시작", buttonStyle, GUILayout.Height(58f)))
+        {
+            StartLevel("modern");
+        }
+
+        GUILayout.Space(12f);
+
+        if (GUILayout.Button("고딕풍 레벨 시작", buttonStyle, GUILayout.Height(58f)))
+        {
+            StartLevel("gothic");
+        }
+
+        GUILayout.Space(16f);
+        GUILayout.Label("선택한 테마 폴더의 프리팹만 인테리어 목록에 표시됩니다.", bodyStyle, GUILayout.Height(34f));
+        GUILayout.EndArea();
     }
 
     private void CreateMaterials()
@@ -316,11 +468,10 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     private GameObject PlacePrefabDecor(Transform parent, string prefabName, Vector3 position, float yaw)
     {
 #if UNITY_EDITOR
-        string prefabPath = ResolveDecorPrefabPath(prefabName);
+        string prefabPath = ResolveExistingDecorPrefabPath(prefabName);
         GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
         if (prefab == null)
         {
-            Debug.LogWarning("Missing decor prefab: " + prefabPath);
             return null;
         }
 
@@ -353,6 +504,43 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 
         return GetActiveDecorPrefabFolder() + "/" + cleanName + ".prefab";
     }
+
+#if UNITY_EDITOR
+    private string ResolveExistingDecorPrefabPath(string prefabName)
+    {
+        string prefabPath = ResolveDecorPrefabPath(prefabName);
+        if (AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath) != null)
+        {
+            return prefabPath;
+        }
+
+        string cleanName = Path.GetFileNameWithoutExtension(prefabName);
+        if (string.IsNullOrEmpty(cleanName))
+        {
+            return prefabPath;
+        }
+
+        string needle = cleanName.ToLowerInvariant();
+        string[] prefabGuids = AssetDatabase.FindAssets("t:Prefab", new[] { GetActiveDecorPrefabFolder() });
+        for (int i = 0; i < prefabGuids.Length; i++)
+        {
+            string candidatePath = AssetDatabase.GUIDToAssetPath(prefabGuids[i]);
+            string candidateName = Path.GetFileNameWithoutExtension(candidatePath);
+            if (string.IsNullOrEmpty(candidateName))
+            {
+                continue;
+            }
+
+            string normalizedName = candidateName.ToLowerInvariant();
+            if (normalizedName == needle || normalizedName.EndsWith("_" + needle))
+            {
+                return candidatePath;
+            }
+        }
+
+        return prefabPath;
+    }
+#endif
 
     private void CreateDust(Transform root)
     {
@@ -393,6 +581,141 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         CreateCrateBarrier(root, new Vector3(1.0f, 0f, -4.0f));
         CreateTrashBagCluster(root, new Vector3(6.0f, 0f, 3.0f));
         CreateMovingBoxCluster(root, new Vector3(-4.8f, 0f, -4.0f));
+        ResolveInitialObstacleOverlaps(root);
+    }
+
+    private void ResolveInitialObstacleOverlaps(Transform root)
+    {
+        CozyTidyObject[] obstacles = root.GetComponentsInChildren<CozyTidyObject>(true);
+        for (int pass = 0; pass < 6; pass++)
+        {
+            bool changed = false;
+            for (int i = 0; i < obstacles.Length; i++)
+            {
+                CozyTidyObject obstacle = obstacles[i];
+                if (obstacle == null)
+                {
+                    continue;
+                }
+
+                changed |= KeepObstacleInsideRoom(obstacle.gameObject, root);
+                changed |= PushObstacleAwayFromDecor(obstacle.gameObject, root);
+            }
+
+            if (!changed)
+            {
+                break;
+            }
+        }
+    }
+
+    private bool KeepObstacleInsideRoom(GameObject obstacle, Transform root)
+    {
+        if (!TryGetWorldBounds(obstacle, out Bounds bounds))
+        {
+            return false;
+        }
+
+        const float wallPadding = 0.18f;
+        Vector3 localCenter = root.InverseTransformPoint(bounds.center);
+        Vector3 localExtents = root.InverseTransformVector(bounds.extents);
+        localExtents = new Vector3(Mathf.Abs(localExtents.x), Mathf.Abs(localExtents.y), Mathf.Abs(localExtents.z));
+
+        float minX = -RoomWidth * 0.5f + wallPadding + localExtents.x;
+        float maxX = RoomWidth * 0.5f - wallPadding - localExtents.x;
+        float minZ = -RoomDepth * 0.5f + wallPadding + localExtents.z;
+        float maxZ = RoomDepth * 0.5f - wallPadding - localExtents.z;
+        Vector3 clampedCenter = new Vector3(
+            Mathf.Clamp(localCenter.x, minX, maxX),
+            localCenter.y,
+            Mathf.Clamp(localCenter.z, minZ, maxZ));
+
+        Vector3 localDelta = clampedCenter - localCenter;
+        if (localDelta.sqrMagnitude <= 0.0001f)
+        {
+            return false;
+        }
+
+        obstacle.transform.position += root.TransformVector(localDelta);
+        return true;
+    }
+
+    private bool PushObstacleAwayFromDecor(GameObject obstacle, Transform root)
+    {
+        if (!TryGetWorldBounds(obstacle, out Bounds obstacleBounds))
+        {
+            return false;
+        }
+
+        bool moved = false;
+        CozyMovableDecor[] decorObjects = root.GetComponentsInChildren<CozyMovableDecor>(true);
+        for (int i = 0; i < decorObjects.Length; i++)
+        {
+            CozyMovableDecor decor = decorObjects[i];
+            if (decor == null || decor.transform.IsChildOf(obstacle.transform))
+            {
+                continue;
+            }
+
+            if (!TryGetWorldBounds(decor.gameObject, out Bounds decorBounds))
+            {
+                continue;
+            }
+
+            Vector2 obstacleMin = new Vector2(obstacleBounds.min.x, obstacleBounds.min.z);
+            Vector2 obstacleMax = new Vector2(obstacleBounds.max.x, obstacleBounds.max.z);
+            Vector2 decorMin = new Vector2(decorBounds.min.x, decorBounds.min.z);
+            Vector2 decorMax = new Vector2(decorBounds.max.x, decorBounds.max.z);
+            const float padding = 0.16f;
+            float overlapX = Mathf.Min(obstacleMax.x, decorMax.x + padding) - Mathf.Max(obstacleMin.x, decorMin.x - padding);
+            float overlapZ = Mathf.Min(obstacleMax.y, decorMax.y + padding) - Mathf.Max(obstacleMin.y, decorMin.y - padding);
+            if (overlapX <= 0f || overlapZ <= 0f)
+            {
+                continue;
+            }
+
+            Vector3 pushDirection = obstacleBounds.center - decorBounds.center;
+            if (Mathf.Abs(pushDirection.x) < 0.001f && Mathf.Abs(pushDirection.z) < 0.001f)
+            {
+                pushDirection = Vector3.right;
+            }
+
+            Vector3 push = Mathf.Abs(pushDirection.x) > Mathf.Abs(pushDirection.z)
+                ? new Vector3(Mathf.Sign(pushDirection.x) * overlapX, 0f, 0f)
+                : new Vector3(0f, 0f, Mathf.Sign(pushDirection.z) * overlapZ);
+            obstacle.transform.position += push;
+            obstacleBounds.center += push;
+            moved = true;
+        }
+
+        return moved;
+    }
+
+    private bool TryGetWorldBounds(GameObject target, out Bounds bounds)
+    {
+        bounds = default;
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>(true);
+        bool hasBounds = false;
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer renderer = renderers[i];
+            if (renderer == null || !renderer.enabled)
+            {
+                continue;
+            }
+
+            if (!hasBounds)
+            {
+                bounds = renderer.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        return hasBounds;
     }
 
     private GameObject[] CreateDecorTemplates(Transform root)
@@ -567,6 +890,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 
         CozyToolController tools = rig.AddComponent<CozyToolController>();
         tools.viewCamera = camera;
+        tools.lobbyBootstrap = this;
         tools.decorTemplates = templates;
         tools.previewMaterial = previewMaterial;
         tools.paintRollerVisualPrefab = LoadCleaningToolPrefab("roller");
@@ -971,6 +1295,7 @@ public sealed class CozyOrbitCameraController : MonoBehaviour
 public sealed class CozyToolController : MonoBehaviour
 {
     public Camera viewCamera;
+    public CozyRestoreBootstrap lobbyBootstrap;
     public CozyProgressTracker progressTracker;
     public GameObject[] decorTemplates;
     public Material previewMaterial;
@@ -986,6 +1311,9 @@ public sealed class CozyToolController : MonoBehaviour
     private int decorIndex;
     private float decorYaw;
     private GameObject previewInstance;
+    private GameObject floorFinishPreview;
+    private Transform floorFinishRoot;
+    private readonly Dictionary<Vector2Int, GameObject> installedFloorFinishes = new Dictionary<Vector2Int, GameObject>();
     private CozyMovableDecor movingDecor;
     private CozyPaintableSurface activePaintSurface;
     private CozyMoppableFloor activeMopFloor;
@@ -1002,6 +1330,15 @@ public sealed class CozyToolController : MonoBehaviour
     private float toolHotbarVisibleUntil;
     private const float RollerVisualModelX = 100f;
     private const float ToolHotbarDuration = 1.25f;
+    private const float DecorPlacementRoomHalfWidth = 6.82f;
+    private const float DecorPlacementRoomHalfDepth = 5.32f;
+    private const float DecorPlacementPadding = 0.08f;
+    private const float FloorFinishCellSize = 0.62f;
+    private const float FloorFinishThickness = 0.035f;
+    private bool useTileFinish;
+    private int floorFinishQuarterTurns;
+    private bool floorFinishPreviewHasValidity;
+    private bool floorFinishPreviewLastValid;
     private readonly Vector3 rollerVisualModelOffset = new Vector3(0f, -0.01f, -0.14f);
     private RollerVisualState paintRollerVisual;
     private RollerVisualState wetMopRollerVisual;
@@ -1074,18 +1411,34 @@ public sealed class CozyToolController : MonoBehaviour
 
     private void OnGUI()
     {
-        GUI.Box(new Rect(18, 18, 300, 86), "Cleaning Status");
-        GUI.Label(new Rect(32, 44, 270, 22), targetProgressLabel);
-        GUI.Label(new Rect(32, 68, 270, 22), "Tool: " + GetToolDisplayName(mode));
+        GUI.Box(new Rect(14, 14, 230, 66), "Cleaning Status");
+        GUI.Label(new Rect(24, 36, 210, 18), targetProgressLabel);
+        GUI.Label(new Rect(24, 55, 210, 18), "Tool: " + GetToolDisplayName(mode));
 
         float progress = progressTracker != null ? progressTracker.NormalizedProgress : 0f;
-        GUI.Box(new Rect(18, 110, 300, 28), string.Empty);
-        GUI.Box(new Rect(28, 119, 280, 10), string.Empty);
-        GUI.Box(new Rect(28, 119, 280 * progress, 10), string.Empty);
+        GUI.Box(new Rect(14, 86, 230, 22), string.Empty);
+        GUI.Box(new Rect(22, 93, 214, 8), string.Empty);
+        GUI.Box(new Rect(22, 93, 214 * progress, 8), string.Empty);
+
+        if (progress >= 0.999f)
+        {
+            DrawCompletionLobbyButton();
+        }
 
         if (Time.time <= toolHotbarVisibleUntil)
         {
             DrawToolHotbar();
+        }
+    }
+
+    private void DrawCompletionLobbyButton()
+    {
+        GUIStyle buttonStyle = new GUIStyle(GUI.skin.button);
+        buttonStyle.fontSize = 13;
+        buttonStyle.fontStyle = FontStyle.Bold;
+        if (GUI.Button(new Rect(Screen.width - 110f, 18f, 92f, 32f), "로비", buttonStyle))
+        {
+            lobbyBootstrap?.ReturnToLobby();
         }
     }
 
@@ -1099,7 +1452,8 @@ public sealed class CozyToolController : MonoBehaviour
             CozyToolMode.Paint,
             CozyToolMode.WindowWiper,
             CozyToolMode.Decorate,
-            CozyToolMode.Move
+            CozyToolMode.Move,
+            CozyToolMode.FloorFinish
         };
 
         float slotSize = 58f;
@@ -1169,6 +1523,7 @@ public sealed class CozyToolController : MonoBehaviour
             case CozyToolMode.WindowWiper: return "Wiper";
             case CozyToolMode.Decorate: return "Decor";
             case CozyToolMode.Move: return "Move";
+            case CozyToolMode.FloorFinish: return "Finish";
             default: return toolMode.ToString();
         }
     }
@@ -1184,6 +1539,7 @@ public sealed class CozyToolController : MonoBehaviour
             case CozyToolMode.WindowWiper: return "Squeegee";
             case CozyToolMode.Decorate: return "Decorate";
             case CozyToolMode.Move: return "Move";
+            case CozyToolMode.FloorFinish: return "Floor Finish";
             default: return toolMode.ToString();
         }
     }
@@ -1207,6 +1563,7 @@ public sealed class CozyToolController : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Alpha5)) SetMode(CozyToolMode.WindowWiper);
         if (Input.GetKeyDown(KeyCode.Alpha6)) SetMode(CozyToolMode.Decorate);
         if (Input.GetKeyDown(KeyCode.Alpha7)) SetMode(CozyToolMode.Move);
+        if (Input.GetKeyDown(KeyCode.Alpha8)) SetMode(CozyToolMode.FloorFinish);
 
         if (mode == CozyToolMode.Decorate && decorTemplates != null && decorTemplates.Length > 0)
         {
@@ -1222,6 +1579,22 @@ public sealed class CozyToolController : MonoBehaviour
                 RecreatePreview();
             }
         }
+
+        if (mode == CozyToolMode.FloorFinish)
+        {
+            if (Input.GetKeyDown(KeyCode.Tab))
+            {
+                floorFinishQuarterTurns = (floorFinishQuarterTurns + 1) % 4;
+                status = "Floor Finish: rotated";
+            }
+
+            if (Input.GetKeyDown(KeyCode.Z) || Input.GetKeyDown(KeyCode.X))
+            {
+                useTileFinish = !useTileFinish;
+                status = "Floor Finish: " + GetFloorFinishDisplayName();
+                RecreateFloorFinishPreview();
+            }
+        }
     }
 
     private void SetMode(CozyToolMode nextMode)
@@ -1234,6 +1607,7 @@ public sealed class CozyToolController : MonoBehaviour
         }
 
         ClearPreview();
+        ClearFloorFinishPreview();
         mode = nextMode;
         toolHotbarVisibleUntil = Time.time + ToolHotbarDuration;
         status = "Switched to " + mode;
@@ -1247,6 +1621,12 @@ public sealed class CozyToolController : MonoBehaviour
         }
 
         Ray ray = viewCamera.ScreenPointToRay(Input.mousePosition);
+
+        if (mode == CozyToolMode.FloorFinish)
+        {
+            HandleFloorFinishTool(ray);
+            return;
+        }
 
         if (mode == CozyToolMode.WetMop)
         {
@@ -1494,7 +1874,9 @@ public sealed class CozyToolController : MonoBehaviour
             }
         }
 
-        bool floorHit = Physics.Raycast(ray, out RaycastHit hit, reach) && Vector3.Dot(hit.normal, Vector3.up) > 0.65f;
+        bool floorHit = Physics.Raycast(ray, out RaycastHit hit, reach) &&
+            Vector3.Dot(hit.normal, Vector3.up) > 0.65f &&
+            hit.collider.GetComponentInParent<CozyMoppableFloor>() != null;
         if (!floorHit)
         {
             if (previewInstance != null)
@@ -1531,10 +1913,18 @@ public sealed class CozyToolController : MonoBehaviour
         previewInstance.transform.position = hit.point;
         previewInstance.transform.rotation = CozyDecorTemplate.GetPlacementRotation(previewInstance, decorYaw);
         CozyDecorTemplate.SnapBottomToFloor(previewInstance, hit.point.y);
-        status = mode == CozyToolMode.Move ? (movingDecor != null ? "Move: place selected decor or click trash bin to discard" : "Move: click furniture to pick it up") : "Decorate: place " + CurrentDecorName;
+        bool canPlaceDecor = IsDecorPlacementValid(previewInstance, movingDecor != null ? movingDecor.gameObject : null, out string placementReason);
+        status = canPlaceDecor
+            ? (mode == CozyToolMode.Move ? (movingDecor != null ? "Move: place selected decor or click trash bin to discard" : "Move: click furniture to pick it up") : "Decorate: place " + CurrentDecorName)
+            : "Cannot place here: " + placementReason;
 
         if (Input.GetMouseButtonDown(0) && !pickedThisFrame)
         {
+            if (!canPlaceDecor)
+            {
+                return;
+            }
+
             if (mode == CozyToolMode.Move && movingDecor != null)
             {
                 movingDecor.transform.position = hit.point;
@@ -1552,10 +1942,316 @@ public sealed class CozyToolController : MonoBehaviour
                 placed.SetActive(true);
                 CozyDecorTemplate.SnapBottomToFloor(placed, hit.point.y);
                 SetColliders(placed, true);
+                if (!IsDecorPlacementValid(placed, null, out _))
+                {
+                    Destroy(placed);
+                    status = "Cannot place here: blocked";
+                    return;
+                }
+
                 progressTracker?.AddPlacedDecor(placed);
                 status = "Placed " + CurrentDecorName;
             }
         }
+    }
+
+    private void HandleFloorFinishTool(Ray ray)
+    {
+        if (!TryGetWetMopTarget(ray, out CozyMoppableFloor floor, out Vector3 hitPoint, out _))
+        {
+            ClearFloorFinishPreview();
+            targetProgressLabel = "Finish: -";
+            status = "Floor Finish: point at the floor.";
+            return;
+        }
+
+        EnsureFloorFinishPreview();
+        Vector2Int cell = GetFloorFinishCell(floor.transform, hitPoint);
+        Vector3 cellCenter = GetFloorFinishCellCenter(floor.transform, cell);
+        Quaternion rotation = Quaternion.Euler(0f, floorFinishQuarterTurns * 90f, 0f);
+        bool occupied = installedFloorFinishes.ContainsKey(cell);
+        string reason = occupied ? "already installed" : string.Empty;
+        bool canInstall = !occupied && IsFloorFinishPlacementValid(floor.transform, cellCenter, rotation, out reason);
+
+        floorFinishPreview.SetActive(true);
+        floorFinishPreview.transform.position = cellCenter;
+        floorFinishPreview.transform.rotation = rotation;
+        floorFinishPreview.transform.localScale = GetFloorFinishScale();
+        if (!floorFinishPreviewHasValidity || floorFinishPreviewLastValid != canInstall)
+        {
+            ApplyPreviewMaterial(floorFinishPreview, canInstall ? previewMaterial : heldMaterial);
+            floorFinishPreviewHasValidity = true;
+            floorFinishPreviewLastValid = canInstall;
+        }
+
+        targetProgressLabel = GetFloorFinishDisplayName() + ": " + installedFloorFinishes.Count + " installed";
+        status = canInstall ? "Floor Finish: click/drag to install " + GetFloorFinishDisplayName() : "Cannot install: " + reason;
+
+        if (Input.GetMouseButton(0) && canInstall)
+        {
+            InstallFloorFinish(cellCenter, rotation, cell);
+        }
+    }
+
+    private void EnsureFloorFinishPreview()
+    {
+        if (floorFinishPreview != null)
+        {
+            return;
+        }
+
+        floorFinishPreview = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        floorFinishPreview.name = "Floor Finish Preview";
+        Collider collider = floorFinishPreview.GetComponent<Collider>();
+        if (collider != null)
+        {
+            collider.enabled = false;
+        }
+        floorFinishPreview.SetActive(false);
+        ApplyPreviewMaterial(floorFinishPreview, previewMaterial);
+    }
+
+    private void RecreateFloorFinishPreview()
+    {
+        ClearFloorFinishPreview();
+        EnsureFloorFinishPreview();
+    }
+
+    private void ClearFloorFinishPreview()
+    {
+        if (floorFinishPreview != null)
+        {
+            Destroy(floorFinishPreview);
+            floorFinishPreview = null;
+        }
+        floorFinishPreviewHasValidity = false;
+    }
+
+    private Vector2Int GetFloorFinishCell(Transform floorTransform, Vector3 worldPoint)
+    {
+        Vector3 localPoint = floorTransform.InverseTransformPoint(worldPoint);
+        Vector3 floorSize = floorTransform.lossyScale;
+        float x = localPoint.x * Mathf.Max(0.001f, floorSize.x);
+        float z = localPoint.z * Mathf.Max(0.001f, floorSize.z);
+        int col = Mathf.FloorToInt((x + floorSize.x * 0.5f) / FloorFinishCellSize);
+        int row = Mathf.FloorToInt((z + floorSize.z * 0.5f) / FloorFinishCellSize);
+        return new Vector2Int(col, row);
+    }
+
+    private Vector3 GetFloorFinishCellCenter(Transform floorTransform, Vector2Int cell)
+    {
+        Vector3 floorSize = floorTransform.lossyScale;
+        float x = -floorSize.x * 0.5f + cell.x * FloorFinishCellSize + FloorFinishCellSize * 0.5f;
+        float z = -floorSize.z * 0.5f + cell.y * FloorFinishCellSize + FloorFinishCellSize * 0.5f;
+        Vector3 localCenter = new Vector3(
+            x / Mathf.Max(0.001f, floorSize.x),
+            0.5f + FloorFinishThickness * 0.5f,
+            z / Mathf.Max(0.001f, floorSize.z));
+        return floorTransform.TransformPoint(localCenter);
+    }
+
+    private Vector3 GetFloorFinishScale()
+    {
+        return useTileFinish
+            ? new Vector3(FloorFinishCellSize * 0.94f, FloorFinishThickness, FloorFinishCellSize * 0.94f)
+            : new Vector3(FloorFinishCellSize * 1.85f, FloorFinishThickness, FloorFinishCellSize * 0.46f);
+    }
+
+    private bool IsFloorFinishPlacementValid(Transform floorTransform, Vector3 center, Quaternion rotation, out string reason)
+    {
+        reason = string.Empty;
+        Vector3 floorSize = floorTransform.lossyScale;
+        Vector3 halfExtents = rotation * (GetFloorFinishScale() * 0.5f);
+        halfExtents = new Vector3(Mathf.Abs(halfExtents.x), Mathf.Abs(halfExtents.y), Mathf.Abs(halfExtents.z));
+        if (center.x - halfExtents.x < -floorSize.x * 0.5f || center.x + halfExtents.x > floorSize.x * 0.5f ||
+            center.z - halfExtents.z < -floorSize.z * 0.5f || center.z + halfExtents.z > floorSize.z * 0.5f)
+        {
+            reason = "too close to wall";
+            return false;
+        }
+
+        Collider[] hits = Physics.OverlapBox(center + Vector3.up * 0.18f, new Vector3(halfExtents.x, 0.18f, halfExtents.z), rotation, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider hit = hits[i];
+            if (hit == null || !hit.enabled)
+            {
+                continue;
+            }
+
+            if (hit.GetComponentInParent<CozyMoppableFloor>() != null || hit.GetComponentInParent<CozyDirtPatch>() != null)
+            {
+                continue;
+            }
+
+            if (hit.GetComponentInParent<CozyTidyObject>() != null)
+            {
+                reason = "blocked by obstacle";
+                return false;
+            }
+
+            if (hit.GetComponentInParent<CozyMovableDecor>() != null)
+            {
+                reason = "blocked by decor";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void InstallFloorFinish(Vector3 position, Quaternion rotation, Vector2Int cell)
+    {
+        if (installedFloorFinishes.ContainsKey(cell))
+        {
+            return;
+        }
+
+        if (floorFinishRoot == null)
+        {
+            GameObject root = new GameObject("Installed Floor Finishes");
+            floorFinishRoot = root.transform;
+            if (transform.root != null)
+            {
+                floorFinishRoot.SetParent(transform.root);
+            }
+        }
+
+        GameObject finish = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        finish.name = GetFloorFinishDisplayName() + " " + cell.x + "_" + cell.y;
+        finish.transform.SetParent(floorFinishRoot);
+        finish.transform.position = position;
+        finish.transform.rotation = rotation;
+        finish.transform.localScale = GetFloorFinishScale();
+        Collider collider = finish.GetComponent<Collider>();
+        if (collider != null)
+        {
+            collider.enabled = false;
+        }
+
+        Renderer renderer = finish.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            renderer.sharedMaterial = CreateFloorFinishMaterial();
+        }
+
+        installedFloorFinishes[cell] = finish;
+        status = "Installed " + GetFloorFinishDisplayName();
+    }
+
+    private Material CreateFloorFinishMaterial()
+    {
+        Color color = useTileFinish ? new Color(0.72f, 0.77f, 0.76f, 1f) : new Color(0.63f, 0.42f, 0.26f, 1f);
+        Material material = new Material(Shader.Find("Standard"));
+        material.name = useTileFinish ? "Runtime Tile Finish" : "Runtime Wood Finish";
+        material.color = color;
+        material.SetFloat("_Glossiness", useTileFinish ? 0.28f : 0.18f);
+        return material;
+    }
+
+    private string GetFloorFinishDisplayName()
+    {
+        return useTileFinish ? "Tile" : "Wood Plank";
+    }
+
+    private bool IsDecorPlacementValid(GameObject candidate, GameObject ignoredObject, out string reason)
+    {
+        reason = string.Empty;
+        if (!TryGetDecorWorldBounds(candidate, out Bounds bounds))
+        {
+            return true;
+        }
+
+        if (bounds.min.x < -DecorPlacementRoomHalfWidth || bounds.max.x > DecorPlacementRoomHalfWidth ||
+            bounds.min.z < -DecorPlacementRoomHalfDepth || bounds.max.z > DecorPlacementRoomHalfDepth)
+        {
+            reason = "too close to wall";
+            return false;
+        }
+
+        Vector3 halfExtents = bounds.extents + new Vector3(DecorPlacementPadding, 0.03f, DecorPlacementPadding);
+        Collider[] hits = Physics.OverlapBox(bounds.center, halfExtents, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider hit = hits[i];
+            if (hit == null || !hit.enabled)
+            {
+                continue;
+            }
+
+            if (hit.transform.IsChildOf(candidate.transform))
+            {
+                continue;
+            }
+
+            if (ignoredObject != null && hit.transform.IsChildOf(ignoredObject.transform))
+            {
+                continue;
+            }
+
+            if (hit.GetComponentInParent<CozyMoppableFloor>() != null || hit.GetComponentInParent<CozyDirtPatch>() != null)
+            {
+                continue;
+            }
+
+            if (hit.GetComponentInParent<CozyPaintableSurface>() != null)
+            {
+                reason = "too close to wall";
+                return false;
+            }
+
+            if (hit.GetComponentInParent<CozyTidyObject>() != null)
+            {
+                reason = "blocked by obstacle";
+                return false;
+            }
+
+            if (hit.GetComponentInParent<CozyDecorTrashBin>() != null)
+            {
+                reason = "blocked by trash bin";
+                return false;
+            }
+
+            if (hit.GetComponentInParent<CozyMovableDecor>() != null)
+            {
+                reason = "blocked by decor";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool TryGetDecorWorldBounds(GameObject target, out Bounds bounds)
+    {
+        bounds = default;
+        if (target == null)
+        {
+            return false;
+        }
+
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>(true);
+        bool hasBounds = false;
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            Renderer renderer = renderers[i];
+            if (renderer == null || !renderer.enabled)
+            {
+                continue;
+            }
+
+            if (!hasBounds)
+            {
+                bounds = renderer.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        return hasBounds;
     }
 
     private void DiscardMovingDecor()
@@ -1620,6 +2316,11 @@ public sealed class CozyToolController : MonoBehaviour
         if (mode == CozyToolMode.WindowWiper)
         {
             return "Window Wiper";
+        }
+
+        if (mode == CozyToolMode.FloorFinish)
+        {
+            return "Finish: " + GetFloorFinishDisplayName();
         }
 
         return "Decor: " + CurrentDecorName;
@@ -2292,7 +2993,7 @@ public sealed class CozyCleanableWindow : MonoBehaviour
     public int coverageGridX = 36;
     public int coverageGridY = 24;
     public float completionThreshold = 0.95f;
-    public Vector2 wiperContactSize = new Vector2(0.72f, 0.24f);
+    public Vector2 wiperContactSize = new Vector2(0.55f, 0.18f);
 
     private float coverage;
     private Material runtimeMaterial;
@@ -2418,8 +3119,8 @@ public sealed class CozyCleanableWindow : MonoBehaviour
 
         int newlyCovered = CoverRectCells(
             uv,
-            Mathf.Max(1.55f, finalStampSize.x / Mathf.Max(0.001f, wiperContactSize.x) * 2.45f),
-            Mathf.Max(1.25f, finalStampSize.y / Mathf.Max(0.001f, wiperContactSize.y) * 2.15f));
+            Mathf.Max(2.15f, finalStampSize.x / Mathf.Max(0.001f, wiperContactSize.x) * 3.6f),
+            Mathf.Max(1.75f, finalStampSize.y / Mathf.Max(0.001f, wiperContactSize.y) * 3.0f));
         coverage = cleanedCells.Count / (float)Mathf.Max(1, coverageGridX * coverageGridY);
         StampDirtMask(uv, finalStampSize, tangent, strength);
 
@@ -2493,7 +3194,7 @@ public sealed class CozyCleanableWindow : MonoBehaviour
         Vector2 brushSizeUv = new Vector2(
             stampSizeWorld.x / Mathf.Max(0.001f, windowSize.x),
             stampSizeWorld.y / Mathf.Max(0.001f, windowSize.y));
-        CozyDirtMaskRenderer.Stamp(dirtMask, ref dirtMaskScratch, uv, brushSizeUv * 0.82f, WorldTangentToMaskTangent(tangent), Mathf.Max(0.1f, strength * 0.28f));
+        CozyDirtMaskRenderer.Stamp(dirtMask, ref dirtMaskScratch, uv, brushSizeUv * 0.68f, WorldTangentToMaskTangent(tangent), Mathf.Max(0.08f, strength * 0.24f));
     }
 
     private Vector2 WorldTangentToMaskTangent(Vector3 tangent)
