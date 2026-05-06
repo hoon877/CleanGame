@@ -8,10 +8,17 @@ using UnityEditor;
 public sealed class CozyDecorTemplate : MonoBehaviour
 {
     public string displayName;
+    public bool useCustomRotationX;
+    public float customRotationX;
 
     public static Quaternion GetPlacementRotation(GameObject decorObject, float yaw)
     {
         CozyDecorTemplate marker = decorObject != null ? decorObject.GetComponent<CozyDecorTemplate>() : null;
+        if (marker != null && marker.useCustomRotationX)
+        {
+            return Quaternion.Euler(marker.customRotationX, yaw, 0f);
+        }
+
         string name = marker != null && !string.IsNullOrEmpty(marker.displayName)
             ? marker.displayName
             : (decorObject != null ? decorObject.name : string.Empty);

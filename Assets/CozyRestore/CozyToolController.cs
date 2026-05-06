@@ -59,6 +59,7 @@ public sealed class CozyToolController : MonoBehaviour
     private readonly Vector3 rollerVisualModelOffset = new Vector3(0f, -0.01f, -0.14f);
     private RollerVisualState paintRollerVisual;
     private RollerVisualState wetMopRollerVisual;
+    private CozyCleaningAudio cleaningAudio;
 
     public bool BlocksRightMouseOrbit => false;
 
@@ -107,6 +108,12 @@ public sealed class CozyToolController : MonoBehaviour
         InitializeRollerVisualStates();
         EnsureRollerVisual(paintRollerVisual);
         EnsureRollerVisual(wetMopRollerVisual);
+        cleaningAudio = GetComponent<CozyCleaningAudio>();
+        if (cleaningAudio == null)
+        {
+            cleaningAudio = gameObject.AddComponent<CozyCleaningAudio>();
+        }
+        cleaningAudio.EnsureReady();
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
     }
@@ -118,6 +125,7 @@ public sealed class CozyToolController : MonoBehaviour
         if (!Input.GetMouseButton(0))
         {
             EndContinuousActions();
+            cleaningAudio?.StopLoop();
         }
         HandleRayTools();
         HandleDecorPreview();
@@ -357,8 +365,13 @@ public sealed class CozyToolController : MonoBehaviour
                 status = "Wet Mop: " + Mathf.RoundToInt(floorMess.CleanPercent * 100f) + "% clean";
                 if (Input.GetMouseButton(0))
                 {
+                    bool wasClean = floorMess.IsClean;
                     Vector3 floorTangent = RotateStampTangent90(floorNormal, ResolveRollerTangent(floorNormal, wetMopRollerVisual != null ? wetMopRollerVisual.quarterTurns : 0));
                     floorMess.CleanAt(floorPoint, floorNormal, floorTangent, cleanRate * Time.deltaTime);
+                    if (!wasClean)
+                    {
+                        cleaningAudio?.PlayLoop(CozyCleaningLoopSound.FloorMop);
+                    }
                     progressTracker?.RefreshTargets();
                 }
                 return;
@@ -397,8 +410,13 @@ public sealed class CozyToolController : MonoBehaviour
                 status = "Paint: " + Mathf.RoundToInt(surface.DisplayPaintPercent * 100f) + "% covered";
                 if (Input.GetMouseButton(0))
                 {
+                    bool wasPainted = surface.DisplayIsPainted;
                     Vector3 paintTangent = RotateStampTangent90(paintNormal, ResolveRollerTangent(paintNormal, paintRollerVisual != null ? paintRollerVisual.quarterTurns : 0));
                     surface.PaintAt(paintPoint, paintNormal, paintTangent, paintRate * Time.deltaTime);
+                    if (!wasPainted)
+                    {
+                        cleaningAudio?.PlayLoop(CozyCleaningLoopSound.PaintRoller);
+                    }
                     progressTracker?.RefreshTargets();
                 }
                 return;
@@ -436,8 +454,13 @@ public sealed class CozyToolController : MonoBehaviour
                 status = "Window Wiper: " + Mathf.RoundToInt(window.CleanPercent * 100f) + "% clean";
                 if (Input.GetMouseButton(0))
                 {
+                    bool wasClean = window.IsClean;
                     Vector3 tangent = ResolveRollerTangent(windowNormal, windowWiperQuarterTurns);
                     window.CleanAt(windowPoint, windowNormal, tangent, cleanRate * Time.deltaTime);
+                    if (!wasClean)
+                    {
+                        cleaningAudio?.PlayLoop(CozyCleaningLoopSound.WindowWiper);
+                    }
                     progressTracker?.RefreshTargets();
                 }
                 return;
@@ -480,6 +503,7 @@ public sealed class CozyToolController : MonoBehaviour
                 status = "Cleanup: click to remove " + obstacle.name;
                 if (Input.GetMouseButtonDown(0))
                 {
+                    cleaningAudio?.PlayOneShot(CozyCleaningOneShotSound.ObstacleRemove);
                     obstacle.TidyAway();
                     progressTracker?.RefreshTargets();
                     status = "Removed " + obstacle.name;
@@ -491,6 +515,7 @@ public sealed class CozyToolController : MonoBehaviour
             status = dirt != null ? "Cleanup: " + Mathf.RoundToInt(dirt.CleanPercent * 100f) + "% clean" : "Cleanup: remove dust, clutter, and obstacles.";
             if (dirt != null && Input.GetMouseButtonDown(0))
             {
+                cleaningAudio?.PlayOneShot(CozyCleaningOneShotSound.DustClean);
                 dirt.CleanStep();
                 progressTracker?.RefreshTargets();
             }
@@ -1243,6 +1268,8 @@ public sealed class CozyToolController : MonoBehaviour
             activeWindow.EndStroke();
             activeWindow = null;
         }
+
+        cleaningAudio?.StopLoop();
     }
 
     private void ApplyPreviewMaterial(GameObject target, Material material)

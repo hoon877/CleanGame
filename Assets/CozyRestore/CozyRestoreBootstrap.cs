@@ -11,6 +11,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     private const string CleaningToolPrefabFolder = "Assets/Prefabs/cleanning_tool";
     private const float DecorScaleMultiplier = 1.5f;
     private const float LargeDecorScaleMultiplier = 2f;
+    private const float GothicReducedDecorScaleMultiplier = 1f;
     public bool buildOnPlay = true;
     public bool rebuildExistingRoom = true;
     public string roomRootName = "CozyRestore_Room";
@@ -45,6 +46,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     private Material mopMaterial;
     private Material heldMaterial;
     private Texture2D rollerBrushTexture;
+    private Texture2D[] stainTextures;
 
     private void Awake()
     {
@@ -239,6 +241,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     private void CreateMaterials()
     {
         rollerBrushTexture = LoadBrushTexture();
+        stainTextures = LoadStainTextures();
         if (IsModernTheme())
         {
             floorMaterial = MakeMaterial("Modern Floor", new Color(0.78f, 0.79f, 0.76f), 0.58f);
@@ -312,6 +315,57 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         texture.wrapMode = TextureWrapMode.Clamp;
         texture.filterMode = FilterMode.Bilinear;
         return texture;
+    }
+
+    private Texture2D[] LoadStainTextures()
+    {
+        List<Texture2D> textures = new List<Texture2D>();
+#if UNITY_EDITOR
+        List<string> stainFolders = new List<string>();
+        if (AssetDatabase.IsValidFolder("Assets/Resource/stain"))
+        {
+            stainFolders.Add("Assets/Resource/stain");
+        }
+        if (AssetDatabase.IsValidFolder("Assets/Resources/stain"))
+        {
+            stainFolders.Add("Assets/Resources/stain");
+        }
+
+        string[] guids = stainFolders.Count > 0
+            ? AssetDatabase.FindAssets("t:Texture2D", stainFolders.ToArray())
+            : new string[0];
+        System.Array.Sort(guids, (a, b) => string.Compare(AssetDatabase.GUIDToAssetPath(a), AssetDatabase.GUIDToAssetPath(b), System.StringComparison.Ordinal));
+        for (int i = 0; i < guids.Length; i++)
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+            Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            if (texture != null)
+            {
+                if (Path.GetFileNameWithoutExtension(path).ToLowerInvariant() == "stain")
+                {
+                    textures.Insert(0, texture);
+                }
+                else
+                {
+                    textures.Add(texture);
+                }
+            }
+        }
+#endif
+
+        if (textures.Count == 0)
+        {
+            Texture2D[] resourceTextures = Resources.LoadAll<Texture2D>("stain");
+            for (int i = 0; i < resourceTextures.Length; i++)
+            {
+                if (resourceTextures[i] != null)
+                {
+                    textures.Add(resourceTextures[i]);
+                }
+            }
+        }
+
+        return textures.ToArray();
     }
 
     private Material MakeMaterial(string materialName, Color color, float roughness)
@@ -563,8 +617,95 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 
         for (int i = 0; i < positions.Length; i++)
         {
-            GameObject dirt = Cube("Dust Patch " + (i + 1), root, positions[i], scales[i], dirtMaterial, typeof(CozyDirtPatch));
-            dirt.transform.rotation = Quaternion.Euler(0f, i * 24f, 0f);
+            bool isFloorStain = positions[i].y < 0.05f && scales[i].y <= 0.03f;
+            bool isLeftWallStain = positions[i].x < -RoomWidth * 0.5f + 0.25f;
+            bool isBackWallStain = positions[i].z > RoomDepth * 0.5f - 0.25f;
+            bool isWindowStain = isBackWallStain
+                && positions[i].x > WindowCenterX - WindowWidth * 0.5f
+                && positions[i].x < WindowCenterX + WindowWidth * 0.5f
+                && positions[i].y > WindowCenterY - WindowHeight * 0.5f
+                && positions[i].y < WindowCenterY + WindowHeight * 0.5f;
+            Vector3 patchPosition = positions[i];
+            Vector3 patchScale = scales[i];
+            Quaternion patchRotation = Quaternion.Euler(0f, i * 24f, 0f);
+            if (isFloorStain)
+            {
+                patchPosition.y = 0.001f;
+                patchScale.y = 0.001f;
+            }
+            else if (isLeftWallStain)
+            {
+                patchPosition.x = -RoomWidth * 0.5f + 0.121f;
+                patchScale.x = 0.001f;
+                patchRotation = Quaternion.identity;
+            }
+            else if (isBackWallStain)
+            {
+                patchPosition.z = RoomDepth * 0.5f - (isWindowStain ? 0.24f : 0.121f);
+                patchScale.z = 0.001f;
+                patchScale.y = Mathf.Max(0.35f, scales[i].z);
+                patchRotation = Quaternion.identity;
+            }
+
+            Material patchMaterial = CreateStainMaterial(i);
+            GameObject dirt = Cube("Dust Patch " + (i + 1), root, patchPosition, patchScale, patchMaterial, typeof(CozyDirtPatch));
+            dirt.transform.rotation = patchRotation;
+        }
+    }
+
+    private Material CreateStainMaterial(int index)
+    {
+        if (stainTextures == null || stainTextures.Length == 0)
+        {
+            return dirtMaterial;
+        }
+
+        Shader shader = Shader.Find("CozyRestore/TransparentTexture");
+        if (shader == null)
+        {
+            shader = Shader.Find("Unlit/Transparent");
+        }
+        if (shader == null)
+        {
+            shader = Shader.Find("Standard");
+        }
+
+        Material material = new Material(shader);
+        material.name = "CR_Floor Stain " + index;
+        material.color = new Color(1f, 1f, 1f, 0.9f);
+        material.mainTexture = stainTextures[Mathf.Abs(index) % stainTextures.Length];
+        ConfigureTransparentMaterial(material);
+        return material;
+    }
+
+    private void ConfigureTransparentMaterial(Material material)
+    {
+        if (material == null)
+        {
+            return;
+        }
+
+        material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        material.SetInt("_ZWrite", 0);
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.renderQueue = 3000;
+
+        if (material.HasProperty("_Mode"))
+        {
+            material.SetFloat("_Mode", 3f);
+        }
+
+        if (material.HasProperty("_Surface"))
+        {
+            material.SetFloat("_Surface", 1f);
+        }
+
+        if (material.HasProperty("_Blend"))
+        {
+            material.SetFloat("_Blend", 0f);
         }
     }
 
@@ -794,8 +935,6 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     {
         template.name = displayName;
         template.transform.localPosition = Vector3.zero;
-        template.transform.localRotation = CozyDecorTemplate.GetPlacementRotation(displayName, 0f);
-        ApplyDecorScale(template, displayName);
 
         CozyDecorTemplate marker = template.GetComponent<CozyDecorTemplate>();
         if (marker == null)
@@ -803,6 +942,11 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
             marker = template.AddComponent<CozyDecorTemplate>();
         }
         marker.displayName = displayName;
+        marker.useCustomRotationX = !IsModernTheme() && IsChairDecor(displayName);
+        marker.customRotationX = 0f;
+
+        template.transform.localRotation = CozyDecorTemplate.GetPlacementRotation(template, 0f);
+        ApplyDecorScale(template, displayName);
 
         if (template.GetComponent<CozyMovableDecor>() == null)
         {
@@ -816,16 +960,22 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 
     private void ApplyDecorScale(GameObject template, string displayName)
     {
-        if (TryGetFixedDecorLocalScale(displayName, out float fixedScale))
+        if (IsModernTheme() && TryGetModernFixedDecorLocalScale(displayName, out float fixedScale))
         {
             template.transform.localScale = Vector3.one * fixedScale;
+            return;
+        }
+
+        if (!IsModernTheme() && TryGetGothicDecorScaleMultiplier(displayName, out float gothicScale))
+        {
+            template.transform.localScale *= gothicScale;
             return;
         }
 
         template.transform.localScale *= GetDecorScaleMultiplier(displayName);
     }
 
-    private bool TryGetFixedDecorLocalScale(string displayName, out float scale)
+    private bool TryGetModernFixedDecorLocalScale(string displayName, out float scale)
     {
         scale = 0f;
         if (string.IsNullOrEmpty(displayName))
@@ -877,6 +1027,52 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         }
 
         return false;
+    }
+
+    private bool TryGetGothicDecorScaleMultiplier(string displayName, out float scaleMultiplier)
+    {
+        scaleMultiplier = 0f;
+        if (string.IsNullOrEmpty(displayName))
+        {
+            return false;
+        }
+
+        string normalizedName = displayName.ToLowerInvariant();
+        if (normalizedName.Contains("bed")
+            || normalizedName.Contains("lamp")
+            || normalizedName.Contains("flower")
+            || normalizedName.Contains("pot")
+            || normalizedName.Contains("plant")
+            || normalizedName.Contains("rug")
+            || normalizedName.Contains("carpet"))
+        {
+            return false;
+        }
+
+        if (normalizedName.Contains("desk"))
+        {
+            scaleMultiplier = 1.5f;
+            return true;
+        }
+
+        if (normalizedName.Contains("sofa"))
+        {
+            scaleMultiplier = 2.5f;
+            return true;
+        }
+
+        if (normalizedName.Contains("chair") || normalizedName.Contains("table"))
+        {
+            scaleMultiplier = GothicReducedDecorScaleMultiplier;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool IsChairDecor(string displayName)
+    {
+        return !string.IsNullOrEmpty(displayName) && displayName.ToLowerInvariant().Contains("chair");
     }
 
     private float GetDecorScaleMultiplier(string displayName)
@@ -969,7 +1165,12 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         camera.transform.localPosition = new Vector3(0f, 0f, -12f);
         camera.transform.localRotation = Quaternion.identity;
         camera.fieldOfView = 50f;
-        camera.clearFlags = CameraClearFlags.Skybox;
+        camera.clearFlags = CameraClearFlags.SolidColor;
+        camera.backgroundColor = new Color(0.74f, 0.82f, 0.86f);
+        if (camera.GetComponent<AudioListener>() == null)
+        {
+            camera.gameObject.AddComponent<AudioListener>();
+        }
 
         CozyOrbitCameraController orbit = rig.AddComponent<CozyOrbitCameraController>();
         orbit.viewCamera = camera;
@@ -983,6 +1184,12 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         orbit.panMax = new Vector3(4.5f, 2.5f, 4.2f);
 
         CozyToolController tools = rig.AddComponent<CozyToolController>();
+        CozyCleaningAudio cleaningAudio = rig.GetComponent<CozyCleaningAudio>();
+        if (cleaningAudio == null)
+        {
+            cleaningAudio = rig.AddComponent<CozyCleaningAudio>();
+        }
+        cleaningAudio.EnsureReady();
         tools.viewCamera = camera;
         tools.lobbyBootstrap = this;
         tools.decorTemplates = templates;
@@ -1039,14 +1246,18 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         sun.transform.SetParent(root);
         sun.transform.rotation = Quaternion.Euler(38f, -28f, 0f);
         Light directional = sun.GetComponent<Light>();
-        directional.intensity = 0.82f;
-        directional.color = new Color(1f, 0.94f, 0.90f);
+        directional.intensity = 0.68f;
+        directional.color = new Color(1f, 0.96f, 0.90f);
 
-        CreatePointLight(root, "Warm Room Light", new Vector3(-1.8f, 2.9f, 1.2f), new Color(1f, 0.84f, 0.72f), 2.0f, 10f);
-        CreatePointLight(root, "Window Bounce", new Vector3(4.0f, 2.8f, 3.8f), new Color(0.84f, 0.92f, 1f), 1.2f, 9f);
-        CreatePointLight(root, "Corner Fill", new Vector3(-6.0f, 2.2f, -2.6f), new Color(1f, 0.88f, 0.90f), 1.0f, 8f);
+        CreatePointLight(root, "Warm Room Light", new Vector3(-1.8f, 2.9f, 1.2f), new Color(1f, 0.84f, 0.72f), 1.05f, 10f);
+        CreatePointLight(root, "Window Bounce", new Vector3(4.0f, 2.8f, 3.8f), new Color(0.84f, 0.92f, 1f), 0.75f, 9f);
+        CreatePointLight(root, "Corner Fill", new Vector3(-6.0f, 2.2f, -2.6f), new Color(1f, 0.88f, 0.90f), 0.65f, 8f);
+        CreatePointLight(root, "Ceiling Soft Fill", new Vector3(0f, 4.2f, 0.2f), new Color(0.88f, 0.94f, 1f), 0.85f, 12f);
+        CreatePointLight(root, "Front Camera Fill", new Vector3(0f, 2.4f, -4.6f), new Color(0.92f, 0.97f, 1f), 0.45f, 11f);
+        CreateSpotLight(root, "Window Sun Spot", new Vector3(WindowCenterX + 0.55f, WindowCenterY + 0.85f, RoomDepth * 0.5f + 0.85f), new Vector3(WindowCenterX - 0.45f, 0.85f, 1.35f), new Color(1f, 0.88f, 0.58f), 0.7f, 8f, 38f);
 
-        RenderSettings.ambientLight = new Color(0.76f, 0.78f, 0.84f);
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.56f, 0.60f, 0.65f);
         RenderSettings.fog = false;
     }
 
@@ -1060,6 +1271,22 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         point.color = color;
         point.intensity = intensity;
         point.range = range;
+    }
+
+    private void CreateSpotLight(Transform root, string lightName, Vector3 position, Vector3 target, Color color, float intensity, float range, float spotAngle)
+    {
+        GameObject go = new GameObject(lightName);
+        go.transform.SetParent(root);
+        go.transform.position = position;
+        go.transform.rotation = Quaternion.LookRotation((target - position).normalized, Vector3.up);
+
+        Light spot = go.AddComponent<Light>();
+        spot.type = LightType.Spot;
+        spot.color = color;
+        spot.intensity = intensity;
+        spot.range = range;
+        spot.spotAngle = spotAngle;
+        spot.shadows = LightShadows.None;
     }
 
     private GameObject CreateBed(Transform parent, Vector3 position, float yaw, bool asTemplate)
