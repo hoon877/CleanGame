@@ -12,6 +12,11 @@ public sealed class CozyProgressTracker : MonoBehaviour
     private CozyMoppableFloor[] floors = new CozyMoppableFloor[0];
     private CozyPaintableSurface[] paintableSurfaces = new CozyPaintableSurface[0];
     private CozyTidyObject[] tidyObjects = new CozyTidyObject[0];
+    private readonly HashSet<int> placedDecorIds = new HashSet<int>();
+
+    public bool ObstaclesCleared => AreDirtPatchesClean() && AreTidyObjectsCleared();
+    public bool SurfaceWorkComplete => AreFloorsClean() && AreWindowsClean() && ArePaintTasksComplete();
+    public bool HasPlacedDecor => placedDecorIds.Count > 0;
 
     public float NormalizedProgress
     {
@@ -101,9 +106,74 @@ public sealed class CozyProgressTracker : MonoBehaviour
 
     public void AddPlacedDecor(GameObject placed)
     {
+        if (placed != null)
+        {
+            placedDecorIds.Add(placed.GetInstanceID());
+        }
     }
 
     public void RemovePlacedDecor(GameObject placed)
     {
+        if (placed != null)
+        {
+            placedDecorIds.Remove(placed.GetInstanceID());
+        }
+    }
+
+    private bool AreDirtPatchesClean()
+    {
+        for (int i = 0; i < dirtPatches.Length; i++)
+        {
+            if (dirtPatches[i] != null && !dirtPatches[i].IsClean)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool AreTidyObjectsCleared()
+    {
+        for (int i = 0; i < tidyObjects.Length; i++)
+        {
+            if (tidyObjects[i] != null && !tidyObjects[i].IsTidied)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool AreFloorsClean()
+    {
+        for (int i = 0; i < floors.Length; i++)
+        {
+            if (floors[i] != null && !floors[i].IsClean)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool AreWindowsClean()
+    {
+        for (int i = 0; i < windows.Length; i++)
+        {
+            if (windows[i] != null && !windows[i].IsClean)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool ArePaintTasksComplete()
+    {
+        return CountCompletedPaintTasks() >= CountPaintTasks();
     }
 }

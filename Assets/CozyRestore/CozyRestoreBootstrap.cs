@@ -9,16 +9,26 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 {
     private const string DecorPrefabFolder = "Assets/Prefabs";
     private const string CleaningToolPrefabFolder = "Assets/Prefabs/cleanning_tool";
+    private const string DecorResourceFolder = "Prefabs";
+    private const string CleaningToolResourceFolder = "Prefabs/cleanning_tool";
     private const float DecorScaleMultiplier = 1.5f;
     private const float LargeDecorScaleMultiplier = 2f;
     private const float GothicReducedDecorScaleMultiplier = 1f;
+    private const string LobbyBackgroundResourceName = "LobbyMain";
+    private const string LobbyBackgroundLegacyResourceName = "\uBA54\uC778\uD654\uBA74";
     public bool buildOnPlay = true;
     public bool rebuildExistingRoom = true;
     public string roomRootName = "CozyRestore_Room";
     public string decorThemeFolder = "gothic";
     private bool showingLobby;
+    private bool showingSettingsPanel;
+    private bool settingsLoaded;
+    private int settingsResolutionIndex = 2;
+    private bool settingsWindowed = true;
+    private float settingsVolume = 1f;
     private Camera lobbyCamera;
     private Light lobbyLight;
+    private CozyGameAudio gameAudio;
 
     private const float RoomWidth = 14f;
     private const float RoomDepth = 11f;
@@ -47,9 +57,57 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     private Material heldMaterial;
     private Texture2D rollerBrushTexture;
     private Texture2D[] stainTextures;
+    private Texture2D lobbyBackgroundTexture;
+    private Texture2D lobbyCloudTexture;
+    private Texture2D lobbyPixelTexture;
+
+    private static readonly Rect ModernHouseImageRect = new Rect(0.46f, 0.30f, 0.24f, 0.66f);
+    private static readonly Rect GothicHouseImageRect = new Rect(0.70f, 0.13f, 0.28f, 0.82f);
+    private static readonly Vector2Int[] SettingsResolutionOptions =
+    {
+        new Vector2Int(1280, 720),
+        new Vector2Int(1600, 900),
+        new Vector2Int(1920, 1080),
+        new Vector2Int(2560, 1440)
+    };
+    private const string VolumePrefsKey = "CozyRestore.MasterVolume";
+    private const string ResolutionPrefsKey = "CozyRestore.ResolutionIndex";
+    private const string WindowedPrefsKey = "CozyRestore.Windowed";
+    private static readonly Vector2[] ModernHouseOutline =
+    {
+        new Vector2(0.486f, 0.955f),
+        new Vector2(0.488f, 0.450f),
+        new Vector2(0.528f, 0.405f),
+        new Vector2(0.553f, 0.345f),
+        new Vector2(0.618f, 0.302f),
+        new Vector2(0.666f, 0.318f),
+        new Vector2(0.720f, 0.373f),
+        new Vector2(0.720f, 0.485f),
+        new Vector2(0.724f, 0.954f)
+    };
+    private static readonly Vector2[] GothicHouseOutline =
+    {
+        new Vector2(0.720f, 0.958f),
+        new Vector2(0.720f, 0.805f),
+        new Vector2(0.720f, 0.690f),
+        new Vector2(0.720f, 0.640f),
+        new Vector2(0.728f, 0.590f),
+        new Vector2(0.780f, 0.340f),
+        new Vector2(0.805f, 0.420f),
+        new Vector2(0.842f, 0.150f),
+        new Vector2(0.860f, 0.250f),
+        new Vector2(0.920f, 0.380f),
+        new Vector2(0.934f, 0.318f),
+        new Vector2(0.951f, 0.530f),
+        new Vector2(0.978f, 0.608f),
+        new Vector2(0.988f, 0.944f),
+        new Vector2(0.956f, 0.960f)
+    };
 
     private void Awake()
     {
+        EnsureGameAudio();
+        LoadSettings();
         if (buildOnPlay && Application.isPlaying)
         {
             ShowLobby();
@@ -63,6 +121,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         ClearLobbyObjects();
 
         GameObject existing = GameObject.Find(roomRootName);
+        Transform existingRoomTransform = existing != null ? existing.transform : null;
         if (existing != null)
         {
             if (!rebuildExistingRoom)
@@ -73,8 +132,10 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 
             DestroyNow(existing);
         }
+        ClearRuntimeLevelObjectsOutsideRoom(existingRoomTransform);
 
         CreateMaterials();
+        EnsureGameAudio().PlayLevelAmbience(IsModernTheme());
 
         GameObject root = new GameObject(roomRootName);
         CreateOpenRoom(root.transform);
@@ -98,10 +159,12 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         showingLobby = true;
 
         GameObject existingRoom = GameObject.Find(roomRootName);
+        Transform existingRoomTransform = existingRoom != null ? existingRoom.transform : null;
         if (existingRoom != null && rebuildExistingRoom)
         {
             DestroyNow(existingRoom);
         }
+        ClearRuntimeLevelObjectsOutsideRoom(existingRoomTransform);
 
         ClearLobbyObjects();
 
@@ -113,6 +176,11 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         lobbyCamera.fieldOfView = 48f;
         lobbyCamera.clearFlags = CameraClearFlags.SolidColor;
         lobbyCamera.backgroundColor = new Color(0.12f, 0.15f, 0.18f);
+        if (lobbyCamera.GetComponent<AudioListener>() == null)
+        {
+            lobbyCamera.gameObject.AddComponent<AudioListener>();
+        }
+        EnsureGameAudio().PlayLobbyMusic();
 
         GameObject lightObject = new GameObject("CozyRestore_LobbyLight");
         lobbyLight = lightObject.AddComponent<Light>();
@@ -131,12 +199,51 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     public void ReturnToLobby()
     {
         GameObject existingRoom = GameObject.Find(roomRootName);
+        Transform existingRoomTransform = existingRoom != null ? existingRoom.transform : null;
         if (existingRoom != null)
         {
             DestroyNow(existingRoom);
         }
+        ClearRuntimeLevelObjectsOutsideRoom(existingRoomTransform);
 
         ShowLobby();
+    }
+
+    private void ClearRuntimeLevelObjectsOutsideRoom(Transform roomToKeep)
+    {
+        CozyMovableDecor[] decorObjects = FindObjectsOfType<CozyMovableDecor>(true);
+        for (int i = 0; i < decorObjects.Length; i++)
+        {
+            CozyMovableDecor decor = decorObjects[i];
+            if (decor == null || decor.gameObject == null)
+            {
+                continue;
+            }
+
+            if (roomToKeep != null && decor.transform.IsChildOf(roomToKeep))
+            {
+                continue;
+            }
+
+            DestroyNow(decor.gameObject);
+        }
+
+        Transform[] sceneTransforms = FindObjectsOfType<Transform>(true);
+        for (int i = 0; i < sceneTransforms.Length; i++)
+        {
+            Transform candidate = sceneTransforms[i];
+            if (candidate == null || candidate.name != "Installed Floor Finishes")
+            {
+                continue;
+            }
+
+            if (roomToKeep != null && candidate.IsChildOf(roomToKeep))
+            {
+                continue;
+            }
+
+            DestroyNow(candidate.gameObject);
+        }
     }
 
     private void ClearLobbyObjects()
@@ -192,50 +299,564 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
             return;
         }
 
-        float panelWidth = Mathf.Min(520f, Screen.width - 48f);
-        float panelHeight = 330f;
-        Rect panelRect = new Rect((Screen.width - panelWidth) * 0.5f, (Screen.height - panelHeight) * 0.5f, panelWidth, panelHeight);
-
-        GUI.color = new Color(0.05f, 0.06f, 0.07f, 0.92f);
-        GUI.Box(panelRect, GUIContent.none);
-        GUI.color = Color.white;
-
-        GUILayout.BeginArea(new Rect(panelRect.x + 32f, panelRect.y + 28f, panelRect.width - 64f, panelRect.height - 56f));
-
-        GUIStyle titleStyle = new GUIStyle(GUI.skin.label);
-        titleStyle.fontSize = 34;
-        titleStyle.fontStyle = FontStyle.Bold;
-        titleStyle.alignment = TextAnchor.MiddleCenter;
-        titleStyle.normal.textColor = new Color(1f, 0.88f, 0.68f);
-        GUILayout.Label("Cozy Restore", titleStyle, GUILayout.Height(54f));
-
-        GUIStyle bodyStyle = new GUIStyle(GUI.skin.label);
-        bodyStyle.fontSize = 16;
-        bodyStyle.alignment = TextAnchor.MiddleCenter;
-        bodyStyle.wordWrap = true;
-        bodyStyle.normal.textColor = new Color(0.86f, 0.88f, 0.88f);
-        GUILayout.Label("디자인할 방의 분위기를 선택하세요.", bodyStyle, GUILayout.Height(42f));
-
-        GUILayout.Space(18f);
-
-        GUIStyle buttonStyle = new GUIStyle(GUI.skin.button);
-        buttonStyle.fontSize = 20;
-        buttonStyle.fontStyle = FontStyle.Bold;
-        if (GUILayout.Button("모던풍 레벨 시작", buttonStyle, GUILayout.Height(58f)))
+        EnsureLobbyTextures();
+        Rect screenRect = new Rect(0f, 0f, Screen.width, Screen.height);
+        if (lobbyBackgroundTexture != null)
         {
-            StartLevel("modern");
+            GUI.DrawTexture(screenRect, lobbyBackgroundTexture, ScaleMode.ScaleAndCrop);
+        }
+        else
+        {
+            GUI.color = new Color(0.70f, 0.84f, 0.94f);
+            GUI.DrawTexture(screenRect, lobbyPixelTexture);
+            GUI.color = Color.white;
         }
 
-        GUILayout.Space(12f);
+        DrawMovingLobbyClouds(screenRect);
 
-        if (GUILayout.Button("고딕풍 레벨 시작", buttonStyle, GUILayout.Height(58f)))
+        Rect imageRect = GetScaleAndCropImageRect(lobbyBackgroundTexture, screenRect);
+        Rect modernRect = ImageRectToScreenRect(ModernHouseImageRect, imageRect);
+        Rect gothicRect = ImageRectToScreenRect(GothicHouseImageRect, imageRect);
+        Vector2 mousePosition = Event.current.mousePosition;
+        Vector2 normalizedMouse = ScreenPointToImageNormalized(mousePosition, imageRect);
+        bool modernHover = IsPointInPolygon(normalizedMouse, ModernHouseOutline);
+        bool gothicHover = IsPointInPolygon(normalizedMouse, GothicHouseOutline);
+
+        if (modernHover)
         {
-            StartLevel("gothic");
+            DrawLobbyHouseOutline(ModernHouseOutline, imageRect, new Color(0.42f, 0.85f, 1f));
+        }
+        if (gothicHover)
+        {
+            DrawLobbyHouseOutline(GothicHouseOutline, imageRect, new Color(1f, 0.78f, 0.44f));
         }
 
-        GUILayout.Space(16f);
-        GUILayout.Label("선택한 테마 폴더의 프리팹만 인테리어 목록에 표시됩니다.", bodyStyle, GUILayout.Height(34f));
-        GUILayout.EndArea();
+        DrawLobbyHouseHint(modernRect, "모던풍", new Color(0.42f, 0.85f, 1f), modernHover);
+        DrawLobbyHouseHint(gothicRect, "고딕풍", new Color(1f, 0.78f, 0.44f), gothicHover);
+
+        if (DrawLobbySettingsUI(screenRect))
+        {
+            return;
+        }
+
+        if (Event.current.type == EventType.MouseDown && Event.current.button == 0)
+        {
+            if (modernHover)
+            {
+                Event.current.Use();
+                StartLevel("modern");
+                return;
+            }
+
+            if (gothicHover)
+            {
+                Event.current.Use();
+                StartLevel("gothic");
+                return;
+            }
+        }
+    }
+
+    private bool DrawLobbySettingsUI(Rect screenRect)
+    {
+        LoadSettings();
+        Rect settingsButtonRect = new Rect(18f, (screenRect.height - 70f) * 0.5f, 150f, 70f);
+        if (DrawLobbyCloudButton(settingsButtonRect, showingSettingsPanel, "설정"))
+        {
+            showingSettingsPanel = !showingSettingsPanel;
+            return true;
+        }
+
+        Rect exitButtonRect = new Rect(settingsButtonRect.x, settingsButtonRect.yMax + 10f, settingsButtonRect.width, settingsButtonRect.height);
+        if (!showingSettingsPanel && DrawLobbyCloudButton(exitButtonRect, false, "게임 종료"))
+        {
+            QuitGame();
+            return true;
+        }
+
+        if (!showingSettingsPanel)
+        {
+            return false;
+        }
+
+        Color previousColor = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.35f);
+        GUI.DrawTexture(screenRect, lobbyPixelTexture);
+        GUI.color = previousColor;
+
+        float panelWidth = Mathf.Min(460f, screenRect.width - 40f);
+        float panelHeight = Mathf.Min(390f, screenRect.height - 40f);
+        Rect panelRect = new Rect((screenRect.width - panelWidth) * 0.5f, (screenRect.height - panelHeight) * 0.5f, panelWidth, panelHeight);
+
+        GUIStyle panelStyle = new GUIStyle(GUI.skin.box);
+        panelStyle.fontSize = 22;
+        panelStyle.fontStyle = FontStyle.Bold;
+        GUI.Box(panelRect, "설정", panelStyle);
+
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
+        labelStyle.fontSize = 15;
+        labelStyle.fontStyle = FontStyle.Bold;
+        labelStyle.normal.textColor = Color.white;
+
+        GUIStyle smallLabelStyle = new GUIStyle(GUI.skin.label);
+        smallLabelStyle.fontSize = 13;
+        smallLabelStyle.normal.textColor = new Color(0.92f, 0.94f, 0.96f);
+
+        float contentX = panelRect.x + 34f;
+        float contentWidth = panelRect.width - 68f;
+        float y = panelRect.y + 58f;
+
+        GUI.Label(new Rect(contentX, y, contentWidth, 24f), "해상도", labelStyle);
+        y += 30f;
+        for (int i = 0; i < SettingsResolutionOptions.Length; i++)
+        {
+            Vector2Int resolution = SettingsResolutionOptions[i];
+            Rect buttonRect = new Rect(contentX + (i % 2) * (contentWidth * 0.5f + 5f), y + (i / 2) * 38f, contentWidth * 0.5f - 5f, 30f);
+            string label = resolution.x + " x " + resolution.y + (i == settingsResolutionIndex ? "  ✓" : string.Empty);
+            if (GUI.Button(buttonRect, label))
+            {
+                ApplyDisplaySettings(i, settingsWindowed);
+            }
+        }
+
+        y += 86f;
+        GUI.Label(new Rect(contentX, y, contentWidth, 24f), "창모드", labelStyle);
+        y += 30f;
+        if (GUI.Button(new Rect(contentX, y, contentWidth * 0.5f - 5f, 32f), settingsWindowed ? "창모드 ✓" : "창모드"))
+        {
+            ApplyDisplaySettings(settingsResolutionIndex, true);
+        }
+        if (GUI.Button(new Rect(contentX + contentWidth * 0.5f + 5f, y, contentWidth * 0.5f - 5f, 32f), !settingsWindowed ? "전체화면 ✓" : "전체화면"))
+        {
+            ApplyDisplaySettings(settingsResolutionIndex, false);
+        }
+
+        y += 54f;
+        GUI.Label(new Rect(contentX, y, contentWidth, 24f), "볼륨", labelStyle);
+        GUI.Label(new Rect(contentX + contentWidth - 64f, y, 64f, 24f), Mathf.RoundToInt(settingsVolume * 100f) + "%", smallLabelStyle);
+        y += 30f;
+        float sliderY = y + 6f;
+        float newVolume = GUI.HorizontalSlider(new Rect(contentX, sliderY, contentWidth, 20f), settingsVolume, 0f, 1f);
+        if (!Mathf.Approximately(newVolume, settingsVolume))
+        {
+            ApplyVolume(newVolume);
+        }
+
+        float closeY = Mathf.Max(sliderY + 44f, panelRect.y + panelRect.height - 46f);
+        closeY = Mathf.Min(closeY, panelRect.y + panelRect.height - 36f);
+        Rect closeRect = new Rect(panelRect.x + panelRect.width - 112f, closeY, 82f, 30f);
+        if (GUI.Button(closeRect, "닫기"))
+        {
+            showingSettingsPanel = false;
+        }
+
+        return true;
+    }
+
+    private void QuitGame()
+    {
+#if UNITY_EDITOR
+        EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
+    }
+
+    private bool DrawLobbyCloudButton(Rect rect, bool active, string label)
+    {
+        bool hovered = rect.Contains(Event.current.mousePosition);
+        float pulse = active || hovered ? 1f + Mathf.Sin(Time.time * 5f) * 0.05f : 1f;
+        Rect cloudRect = new Rect(
+            rect.center.x - rect.width * pulse * 0.5f,
+            rect.center.y - rect.height * pulse * 0.5f,
+            rect.width * pulse,
+            rect.height * pulse);
+
+        Color previousColor = GUI.color;
+        if (lobbyCloudTexture != null)
+        {
+            GUI.color = new Color(0.35f, 0.45f, 0.55f, hovered || active ? 0.16f : 0.10f);
+            GUI.DrawTexture(new Rect(cloudRect.x + 3f, cloudRect.y + 5f, cloudRect.width, cloudRect.height), lobbyCloudTexture, ScaleMode.StretchToFill, true);
+            GUI.color = new Color(1f, 1f, 1f, hovered || active ? 0.96f : 0.78f);
+            GUI.DrawTexture(cloudRect, lobbyCloudTexture, ScaleMode.StretchToFill, true);
+        }
+        else
+        {
+            GUI.color = new Color(1f, 1f, 1f, hovered || active ? 0.72f : 0.48f);
+            GUI.DrawTexture(cloudRect, lobbyPixelTexture);
+        }
+
+        GUI.color = previousColor;
+        bool clicked = GUI.Button(rect, GUIContent.none, GUIStyle.none);
+
+        GUIStyle textStyle = new GUIStyle(GUI.skin.label);
+        textStyle.alignment = TextAnchor.MiddleCenter;
+        textStyle.fontSize = label.Length > 3 ? 19 : 22;
+        textStyle.fontStyle = FontStyle.Bold;
+        textStyle.normal.textColor = hovered || active
+            ? new Color(0.02f, 0.10f, 0.18f, 1f)
+            : new Color(0.05f, 0.16f, 0.26f, 1f);
+
+        GUIStyle outlineStyle = new GUIStyle(textStyle);
+        outlineStyle.normal.textColor = new Color(1f, 1f, 1f, 0.95f);
+
+        GUIStyle shadowStyle = new GUIStyle(textStyle);
+        shadowStyle.normal.textColor = new Color(0f, 0.04f, 0.08f, 0.58f);
+        GUI.Label(new Rect(rect.x + 2f, rect.y + 3f, rect.width, rect.height), label, shadowStyle);
+        DrawLobbyTextOutline(rect, label, outlineStyle, 2f);
+        GUI.Label(rect, label, textStyle);
+        return clicked;
+    }
+
+    private void DrawLobbyTextOutline(Rect rect, string text, GUIStyle style, float offset)
+    {
+        GUI.Label(new Rect(rect.x - offset, rect.y, rect.width, rect.height), text, style);
+        GUI.Label(new Rect(rect.x + offset, rect.y, rect.width, rect.height), text, style);
+        GUI.Label(new Rect(rect.x, rect.y - offset, rect.width, rect.height), text, style);
+        GUI.Label(new Rect(rect.x, rect.y + offset, rect.width, rect.height), text, style);
+        GUI.Label(new Rect(rect.x - offset * 0.7f, rect.y - offset * 0.7f, rect.width, rect.height), text, style);
+        GUI.Label(new Rect(rect.x + offset * 0.7f, rect.y - offset * 0.7f, rect.width, rect.height), text, style);
+        GUI.Label(new Rect(rect.x - offset * 0.7f, rect.y + offset * 0.7f, rect.width, rect.height), text, style);
+        GUI.Label(new Rect(rect.x + offset * 0.7f, rect.y + offset * 0.7f, rect.width, rect.height), text, style);
+    }
+
+    private void LoadSettings()
+    {
+        if (settingsLoaded)
+        {
+            return;
+        }
+
+        settingsLoaded = true;
+        settingsResolutionIndex = Mathf.Clamp(PlayerPrefs.GetInt(ResolutionPrefsKey, FindClosestResolutionIndex(Screen.width, Screen.height)), 0, SettingsResolutionOptions.Length - 1);
+        settingsWindowed = PlayerPrefs.GetInt(WindowedPrefsKey, Screen.fullScreenMode == FullScreenMode.Windowed ? 1 : 0) == 1;
+        settingsVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(VolumePrefsKey, AudioListener.volume));
+        AudioListener.volume = settingsVolume;
+    }
+
+    private int FindClosestResolutionIndex(int width, int height)
+    {
+        int bestIndex = 0;
+        int bestScore = int.MaxValue;
+        for (int i = 0; i < SettingsResolutionOptions.Length; i++)
+        {
+            int score = Mathf.Abs(SettingsResolutionOptions[i].x - width) + Mathf.Abs(SettingsResolutionOptions[i].y - height);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestIndex = i;
+            }
+        }
+
+        return bestIndex;
+    }
+
+    private void ApplyDisplaySettings(int resolutionIndex, bool windowed)
+    {
+        settingsResolutionIndex = Mathf.Clamp(resolutionIndex, 0, SettingsResolutionOptions.Length - 1);
+        settingsWindowed = windowed;
+        Vector2Int resolution = SettingsResolutionOptions[settingsResolutionIndex];
+        Screen.SetResolution(resolution.x, resolution.y, windowed ? FullScreenMode.Windowed : FullScreenMode.FullScreenWindow);
+        PlayerPrefs.SetInt(ResolutionPrefsKey, settingsResolutionIndex);
+        PlayerPrefs.SetInt(WindowedPrefsKey, settingsWindowed ? 1 : 0);
+        PlayerPrefs.Save();
+    }
+
+    private void ApplyVolume(float volume)
+    {
+        settingsVolume = Mathf.Clamp01(volume);
+        AudioListener.volume = settingsVolume;
+        PlayerPrefs.SetFloat(VolumePrefsKey, settingsVolume);
+        PlayerPrefs.Save();
+    }
+
+    private void EnsureLobbyTextures()
+    {
+        if (lobbyBackgroundTexture == null)
+        {
+            lobbyBackgroundTexture = LoadLobbyBackgroundTexture();
+        }
+
+        if (lobbyPixelTexture == null)
+        {
+            lobbyPixelTexture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            lobbyPixelTexture.name = "CR_LobbyPixel";
+            lobbyPixelTexture.SetPixel(0, 0, Color.white);
+            lobbyPixelTexture.Apply();
+        }
+
+        if (lobbyCloudTexture == null)
+        {
+            lobbyCloudTexture = CreateLobbyCloudTexture();
+        }
+    }
+
+    private Texture2D LoadLobbyBackgroundTexture()
+    {
+        Texture2D resourceTexture = Resources.Load<Texture2D>(LobbyBackgroundResourceName);
+        if (resourceTexture != null)
+        {
+            return resourceTexture;
+        }
+
+        resourceTexture = Resources.Load<Texture2D>(LobbyBackgroundLegacyResourceName);
+        if (resourceTexture != null)
+        {
+            return resourceTexture;
+        }
+
+#if UNITY_EDITOR
+        Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Resource/" + LobbyBackgroundLegacyResourceName + ".png");
+        if (texture != null)
+        {
+            return texture;
+        }
+#endif
+        return null;
+    }
+
+    private Texture2D CreateLobbyCloudTexture()
+    {
+        const int width = 256;
+        const int height = 96;
+        Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+        texture.name = "CR_LobbyMovingCloud";
+        texture.wrapMode = TextureWrapMode.Clamp;
+        texture.filterMode = FilterMode.Bilinear;
+
+        Vector2[] centers =
+        {
+            new Vector2(0.18f, 0.56f),
+            new Vector2(0.36f, 0.45f),
+            new Vector2(0.56f, 0.55f),
+            new Vector2(0.74f, 0.48f)
+        };
+        Vector2[] radii =
+        {
+            new Vector2(0.22f, 0.34f),
+            new Vector2(0.26f, 0.42f),
+            new Vector2(0.30f, 0.36f),
+            new Vector2(0.22f, 0.30f)
+        };
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                Vector2 uv = new Vector2(x / (float)(width - 1), y / (float)(height - 1));
+                float alpha = 0f;
+                for (int i = 0; i < centers.Length; i++)
+                {
+                    Vector2 delta = new Vector2((uv.x - centers[i].x) / radii[i].x, (uv.y - centers[i].y) / radii[i].y);
+                    alpha = Mathf.Max(alpha, Mathf.Exp(-Vector2.Dot(delta, delta) * 2.1f));
+                }
+
+                float edgeFade = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(uv.x / 0.18f));
+                edgeFade *= Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((1f - uv.x) / 0.18f));
+                edgeFade *= Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(uv.y / 0.16f));
+                edgeFade *= Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((1f - uv.y) / 0.16f));
+                alpha *= edgeFade * 0.9f;
+                texture.SetPixel(x, y, new Color(1f, 1f, 1f, alpha));
+            }
+        }
+
+        texture.Apply();
+        return texture;
+    }
+
+    private Rect GetScaleAndCropImageRect(Texture2D texture, Rect screenRect)
+    {
+        if (texture == null || texture.width <= 0 || texture.height <= 0)
+        {
+            return screenRect;
+        }
+
+        float screenAspect = screenRect.width / Mathf.Max(1f, screenRect.height);
+        float imageAspect = texture.width / (float)texture.height;
+        if (screenAspect > imageAspect)
+        {
+            float height = screenRect.width / imageAspect;
+            return new Rect(screenRect.x, screenRect.y + (screenRect.height - height) * 0.5f, screenRect.width, height);
+        }
+
+        float width = screenRect.height * imageAspect;
+        return new Rect(screenRect.x + (screenRect.width - width) * 0.5f, screenRect.y, width, screenRect.height);
+    }
+
+    private Rect ImageRectToScreenRect(Rect normalizedImageRect, Rect imageRect)
+    {
+        return new Rect(
+            imageRect.x + normalizedImageRect.x * imageRect.width,
+            imageRect.y + normalizedImageRect.y * imageRect.height,
+            normalizedImageRect.width * imageRect.width,
+            normalizedImageRect.height * imageRect.height);
+    }
+
+    private Vector2 ScreenPointToImageNormalized(Vector2 screenPoint, Rect imageRect)
+    {
+        return new Vector2(
+            (screenPoint.x - imageRect.x) / Mathf.Max(1f, imageRect.width),
+            (screenPoint.y - imageRect.y) / Mathf.Max(1f, imageRect.height));
+    }
+
+    private bool IsPointInPolygon(Vector2 point, Vector2[] polygon)
+    {
+        if (polygon == null || polygon.Length < 3 || point.x < 0f || point.x > 1f || point.y < 0f || point.y > 1f)
+        {
+            return false;
+        }
+
+        bool inside = false;
+        for (int i = 0, j = polygon.Length - 1; i < polygon.Length; j = i++)
+        {
+            bool crosses = (polygon[i].y > point.y) != (polygon[j].y > point.y);
+            if (crosses)
+            {
+                float denominator = polygon[j].y - polygon[i].y;
+                if (Mathf.Abs(denominator) < 0.0001f)
+                {
+                    continue;
+                }
+
+                float xAtY = (polygon[j].x - polygon[i].x) * (point.y - polygon[i].y) / denominator + polygon[i].x;
+                if (point.x < xAtY)
+                {
+                    inside = !inside;
+                }
+            }
+        }
+
+        return inside;
+    }
+
+    private void DrawLobbyHouseOutline(Vector2[] normalizedOutline, Rect imageRect, Color glowColor)
+    {
+        if (normalizedOutline == null || normalizedOutline.Length < 2)
+        {
+            return;
+        }
+
+        float pulse = 0.82f + Mathf.Sin(Time.time * 5.5f) * 0.18f;
+        for (int i = 6; i >= 1; i--)
+        {
+            float thickness = i * 2.2f;
+            float alpha = Mathf.Lerp(0.05f, 0.28f, 1f - i / 6f) * pulse;
+            DrawLobbyPolyline(normalizedOutline, imageRect, thickness, new Color(glowColor.r, glowColor.g, glowColor.b, alpha));
+        }
+
+        DrawLobbyPolyline(normalizedOutline, imageRect, 3f, new Color(1f, 1f, 1f, 0.9f));
+        DrawLobbyPolyline(normalizedOutline, imageRect, 1.4f, new Color(glowColor.r, glowColor.g, glowColor.b, 0.95f));
+    }
+
+    private void DrawLobbyPolyline(Vector2[] normalizedPoints, Rect imageRect, float thickness, Color color)
+    {
+        for (int i = 0; i < normalizedPoints.Length; i++)
+        {
+            Vector2 start = ImageNormalizedToScreenPoint(normalizedPoints[i], imageRect);
+            Vector2 end = ImageNormalizedToScreenPoint(normalizedPoints[(i + 1) % normalizedPoints.Length], imageRect);
+            DrawLobbyLine(start, end, thickness, color);
+        }
+    }
+
+    private Vector2 ImageNormalizedToScreenPoint(Vector2 point, Rect imageRect)
+    {
+        return new Vector2(imageRect.x + point.x * imageRect.width, imageRect.y + point.y * imageRect.height);
+    }
+
+    private void DrawLobbyLine(Vector2 start, Vector2 end, float thickness, Color color)
+    {
+        if (lobbyPixelTexture == null)
+        {
+            return;
+        }
+
+        Vector2 delta = end - start;
+        float length = delta.magnitude;
+        if (length <= 0.001f)
+        {
+            return;
+        }
+
+        Matrix4x4 previousMatrix = GUI.matrix;
+        Color previousColor = GUI.color;
+        GUI.color = color;
+        float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
+        GUIUtility.RotateAroundPivot(angle, start);
+        GUI.DrawTexture(new Rect(start.x, start.y - thickness * 0.5f, length, thickness), lobbyPixelTexture);
+        GUI.matrix = previousMatrix;
+        GUI.color = previousColor;
+    }
+
+    private void DrawMovingLobbyClouds(Rect screenRect)
+    {
+        if (lobbyCloudTexture == null)
+        {
+            return;
+        }
+
+        float time = Time.time;
+        DrawLobbyCloud(new Rect(RepeatCloudX(-screenRect.width * 0.20f, screenRect.width * 0.018f, time, screenRect.width, screenRect.width * 0.55f), screenRect.height * 0.50f, screenRect.width * 0.42f, screenRect.height * 0.16f), 0.18f);
+        DrawLobbyCloud(new Rect(RepeatCloudX(screenRect.width * 0.20f, screenRect.width * 0.012f, time, screenRect.width, screenRect.width * 0.46f), screenRect.height * 0.22f, screenRect.width * 0.34f, screenRect.height * 0.13f), 0.12f);
+        DrawLobbyCloud(new Rect(RepeatCloudX(screenRect.width * 0.60f, screenRect.width * 0.010f, time, screenRect.width, screenRect.width * 0.50f), screenRect.height * 0.73f, screenRect.width * 0.42f, screenRect.height * 0.15f), 0.16f);
+    }
+
+    private float RepeatCloudX(float startX, float speed, float time, float screenWidth, float cloudWidth)
+    {
+        float travel = screenWidth + cloudWidth * 2f;
+        return Mathf.Repeat(startX + time * speed + cloudWidth, travel) - cloudWidth;
+    }
+
+    private void DrawLobbyCloud(Rect rect, float alpha)
+    {
+        Color previousColor = GUI.color;
+        GUI.color = new Color(1f, 1f, 1f, alpha);
+        GUI.DrawTexture(rect, lobbyCloudTexture, ScaleMode.StretchToFill, true);
+        GUI.color = previousColor;
+    }
+
+    private void DrawLobbyHouseHint(Rect houseRect, string label, Color glowColor, bool hovered)
+    {
+        Rect labelRect = new Rect(houseRect.x + houseRect.width * 0.18f, houseRect.y - 42f, houseRect.width * 0.64f, 36f);
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
+        labelStyle.alignment = TextAnchor.MiddleCenter;
+        labelStyle.fontSize = Mathf.Clamp(Mathf.RoundToInt(Screen.height * 0.028f), 18, 30);
+        labelStyle.fontStyle = FontStyle.Bold;
+        labelStyle.normal.textColor = hovered ? Color.white : new Color(1f, 1f, 1f, 0.82f);
+
+        Color previousColor = GUI.color;
+        GUI.color = hovered ? new Color(glowColor.r, glowColor.g, glowColor.b, 0.72f) : new Color(0.02f, 0.03f, 0.04f, 0.40f);
+        GUI.DrawTexture(labelRect, lobbyPixelTexture);
+        GUI.color = previousColor;
+        GUI.Label(labelRect, label, labelStyle);
+    }
+
+    private void DrawGlowFrame(Rect rect, Color color)
+    {
+        Color previousColor = GUI.color;
+        GUI.color = new Color(color.r, color.g, color.b, 0.08f);
+        GUI.DrawTexture(rect, lobbyPixelTexture);
+
+        for (int i = 7; i >= 1; i--)
+        {
+            float thickness = i * 2f;
+            float alpha = Mathf.Lerp(0.08f, 0.36f, 1f - i / 7f);
+            Rect expanded = new Rect(rect.x - thickness, rect.y - thickness, rect.width + thickness * 2f, rect.height + thickness * 2f);
+            DrawRectBorder(expanded, thickness, new Color(color.r, color.g, color.b, alpha));
+        }
+
+        DrawRectBorder(rect, 3f, new Color(1f, 1f, 1f, 0.88f));
+        GUI.color = previousColor;
+    }
+
+    private void DrawRectBorder(Rect rect, float thickness, Color color)
+    {
+        Color previousColor = GUI.color;
+        GUI.color = color;
+        GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, thickness), lobbyPixelTexture);
+        GUI.DrawTexture(new Rect(rect.x, rect.yMax - thickness, rect.width, thickness), lobbyPixelTexture);
+        GUI.DrawTexture(new Rect(rect.x, rect.y, thickness, rect.height), lobbyPixelTexture);
+        GUI.DrawTexture(new Rect(rect.xMax - thickness, rect.y, thickness, rect.height), lobbyPixelTexture);
+        GUI.color = previousColor;
     }
 
     private void CreateMaterials()
@@ -466,6 +1087,11 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         trashBin.transform.localPosition = new Vector3(5.85f, 0f, -4.35f);
         trashBin.AddComponent<CozyDecorTrashBin>();
 
+        if (TryCreateTrashCanPrefabVisual(trashBin.transform))
+        {
+            return;
+        }
+
         GameObject body = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         body.name = "Trash Bin Body";
         body.transform.SetParent(trashBin.transform, false);
@@ -486,6 +1112,106 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         {
             DestroyNow(labelCollider);
         }
+    }
+
+    private bool TryCreateTrashCanPrefabVisual(Transform trashBin)
+    {
+        GameObject trashCanAsset = LoadCleaningToolPrefab("trash_can");
+        if (trashCanAsset == null)
+        {
+            return false;
+        }
+
+        GameObject visual = Instantiate(trashCanAsset, trashBin);
+        visual.name = "Trash Can Model";
+        visual.transform.localPosition = Vector3.zero;
+        visual.transform.localRotation = Quaternion.identity;
+        visual.transform.localScale = Vector3.one;
+
+        DisableChildColliders(visual);
+        FitTrashCanVisual(visual, trashBin, 1.05f, 0.9f);
+        AddTrashCanInteractionCollider(trashBin.gameObject, visual);
+        return true;
+    }
+
+    private void DisableChildColliders(GameObject target)
+    {
+        Collider[] colliders = target.GetComponentsInChildren<Collider>(true);
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            colliders[i].enabled = false;
+            DestroyNow(colliders[i]);
+        }
+    }
+
+    private void FitTrashCanVisual(GameObject visual, Transform trashBin, float targetHeight, float maxFootprint)
+    {
+        if (!TryGetRendererBounds(visual, out Bounds bounds))
+        {
+            return;
+        }
+
+        float height = Mathf.Max(0.001f, bounds.size.y);
+        float footprint = Mathf.Max(0.001f, Mathf.Max(bounds.size.x, bounds.size.z));
+        float scale = Mathf.Min(targetHeight / height, maxFootprint / footprint);
+        visual.transform.localScale *= scale;
+
+        if (!TryGetRendererBounds(visual, out bounds))
+        {
+            return;
+        }
+
+        Vector3 targetPosition = trashBin.position;
+        Vector3 offset = new Vector3(
+            targetPosition.x - bounds.center.x,
+            targetPosition.y - bounds.min.y,
+            targetPosition.z - bounds.center.z);
+        visual.transform.position += offset;
+    }
+
+    private void AddTrashCanInteractionCollider(GameObject trashBin, GameObject visual)
+    {
+        if (!TryGetRendererBounds(visual, out Bounds bounds))
+        {
+            BoxCollider fallbackCollider = trashBin.AddComponent<BoxCollider>();
+            fallbackCollider.center = new Vector3(0f, 0.5f, 0f);
+            fallbackCollider.size = new Vector3(0.8f, 1.0f, 0.8f);
+            return;
+        }
+
+        BoxCollider collider = trashBin.AddComponent<BoxCollider>();
+        collider.center = trashBin.transform.InverseTransformPoint(bounds.center);
+        Vector3 localSize = trashBin.transform.InverseTransformVector(bounds.size);
+        collider.size = new Vector3(
+            Mathf.Max(0.55f, Mathf.Abs(localSize.x) + 0.08f),
+            Mathf.Max(0.85f, Mathf.Abs(localSize.y) + 0.08f),
+            Mathf.Max(0.55f, Mathf.Abs(localSize.z) + 0.08f));
+    }
+
+    private bool TryGetRendererBounds(GameObject target, out Bounds bounds)
+    {
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>(true);
+        bounds = new Bounds(target.transform.position, Vector3.zero);
+        bool hasBounds = false;
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            if (renderers[i] == null)
+            {
+                continue;
+            }
+
+            if (!hasBounds)
+            {
+                bounds = renderers[i].bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderers[i].bounds);
+            }
+        }
+
+        return hasBounds;
     }
 
     private void SetupPaintable(string objectName)
@@ -520,31 +1246,33 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 
     private GameObject PlacePrefabDecor(Transform parent, string prefabName, Vector3 position, float yaw)
     {
-#if UNITY_EDITOR
-        string prefabPath = ResolveExistingDecorPrefabPath(prefabName);
-        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        string displayName;
+        GameObject prefab = LoadDecorPrefab(prefabName, out displayName);
         if (prefab == null)
         {
             return null;
         }
 
         GameObject placed = Instantiate(prefab, parent);
-        PreparePrefabDecorTemplate(placed, GetPrefabDisplayName(prefabPath));
-        placed.name = GetPrefabDisplayName(prefabPath) + " Placed";
+        PreparePrefabDecorTemplate(placed, displayName);
+        placed.name = displayName + " Placed";
         placed.transform.localPosition = position;
         placed.transform.localRotation = CozyDecorTemplate.GetPlacementRotation(placed, yaw);
         placed.SetActive(true);
         CozyDecorTemplate.SnapBottomToFloor(placed, parent.TransformPoint(new Vector3(position.x, 0f, position.z)).y);
         return placed;
-#else
-        return null;
-#endif
     }
 
     private string GetActiveDecorPrefabFolder()
     {
         string theme = string.IsNullOrEmpty(decorThemeFolder) ? string.Empty : decorThemeFolder.Trim('/', '\\');
         return string.IsNullOrEmpty(theme) ? DecorPrefabFolder : DecorPrefabFolder + "/" + theme;
+    }
+
+    private string GetActiveDecorResourceFolder()
+    {
+        string theme = string.IsNullOrEmpty(decorThemeFolder) ? string.Empty : decorThemeFolder.Trim('/', '\\');
+        return string.IsNullOrEmpty(theme) ? DecorResourceFolder : DecorResourceFolder + "/" + theme;
     }
 
     private string ResolveDecorPrefabPath(string prefabName)
@@ -556,6 +1284,41 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         }
 
         return GetActiveDecorPrefabFolder() + "/" + cleanName + ".prefab";
+    }
+
+    private string ResolveDecorResourcePath(string prefabName)
+    {
+        string cleanName = string.IsNullOrEmpty(prefabName) ? string.Empty : prefabName.Trim('/', '\\');
+        if (cleanName.Contains("/"))
+        {
+            return DecorResourceFolder + "/" + cleanName;
+        }
+
+        return GetActiveDecorResourceFolder() + "/" + cleanName;
+    }
+
+    private GameObject LoadDecorPrefab(string prefabName, out string displayName)
+    {
+        displayName = GetPrefabDisplayName(prefabName);
+
+#if UNITY_EDITOR
+        string prefabPath = ResolveExistingDecorPrefabPath(prefabName);
+        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+        if (prefab != null)
+        {
+            displayName = GetPrefabDisplayName(prefabPath);
+            return prefab;
+        }
+#endif
+
+        GameObject resourcePrefab = Resources.Load<GameObject>(ResolveDecorResourcePath(prefabName));
+        if (resourcePrefab != null)
+        {
+            displayName = GetPrefabDisplayName(resourcePrefab.name);
+            return resourcePrefab;
+        }
+
+        return null;
     }
 
 #if UNITY_EDITOR
@@ -631,21 +1394,21 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
             if (isFloorStain)
             {
                 patchPosition.y = 0.001f;
-                patchScale.y = 0.001f;
             }
             else if (isLeftWallStain)
             {
                 patchPosition.x = -RoomWidth * 0.5f + 0.121f;
-                patchScale.x = 0.001f;
-                patchRotation = Quaternion.identity;
+                patchScale = new Vector3(Mathf.Max(0.35f, scales[i].y), 0.001f, scales[i].z);
+                patchRotation = Quaternion.Euler(0f, 0f, 90f);
             }
             else if (isBackWallStain)
             {
                 patchPosition.z = RoomDepth * 0.5f - (isWindowStain ? 0.24f : 0.121f);
-                patchScale.z = 0.001f;
-                patchScale.y = Mathf.Max(0.35f, scales[i].z);
-                patchRotation = Quaternion.identity;
+                patchScale = new Vector3(scales[i].x, 0.001f, Mathf.Max(0.35f, scales[i].z));
+                patchRotation = Quaternion.Euler(90f, 0f, 0f);
             }
+
+            patchScale.y = 0.001f;
 
             Material patchMaterial = CreateStainMaterial(i);
             GameObject dirt = Cube("Dust Patch " + (i + 1), root, patchPosition, patchScale, patchMaterial, typeof(CozyDirtPatch));
@@ -660,7 +1423,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
             return dirtMaterial;
         }
 
-        Shader shader = Shader.Find("CozyRestore/TransparentTexture");
+        Shader shader = CozyRuntimeShaders.Find("CozyRestore/TransparentTexture", "TransparentTexture");
         if (shader == null)
         {
             shader = Shader.Find("Unlit/Transparent");
@@ -895,6 +1658,21 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
             PreparePrefabDecorTemplate(template, GetPrefabDisplayName(prefabPaths[i]));
             templates.Add(template);
         }
+#else
+        GameObject[] resourcePrefabs = Resources.LoadAll<GameObject>(GetActiveDecorResourceFolder());
+        System.Array.Sort(resourcePrefabs, (a, b) => string.Compare(a.name, b.name, System.StringComparison.Ordinal));
+        for (int i = 0; i < resourcePrefabs.Length; i++)
+        {
+            GameObject prefab = resourcePrefabs[i];
+            if (prefab == null || IsFloorFinishPrefabPath(prefab.name))
+            {
+                continue;
+            }
+
+            GameObject template = Instantiate(prefab, library.transform);
+            PreparePrefabDecorTemplate(template, GetPrefabDisplayName(prefab.name));
+            templates.Add(template);
+        }
 #endif
 
         GameObject rugTemplate = CreateRugDecorTemplate(library.transform);
@@ -902,7 +1680,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
 
         if (templates.Count == 0)
         {
-            Debug.LogWarning("No decor prefabs found in " + GetActiveDecorPrefabFolder() + ". Decorate mode will be empty.");
+            Debug.LogWarning("No decor prefabs found in " + GetActiveDecorPrefabFolder() + " or Resources/" + GetActiveDecorResourceFolder() + ". Decorate mode will be empty.");
         }
 
         library.SetActive(false);
@@ -1192,6 +1970,7 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         cleaningAudio.EnsureReady();
         tools.viewCamera = camera;
         tools.lobbyBootstrap = this;
+        tools.gameAudio = EnsureGameAudio();
         tools.decorTemplates = templates;
         tools.decorThemeFolder = decorThemeFolder;
         tools.previewMaterial = previewMaterial;
@@ -1204,19 +1983,37 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
         return rig;
     }
 
+    private CozyGameAudio EnsureGameAudio()
+    {
+        if (gameAudio == null)
+        {
+            gameAudio = GetComponent<CozyGameAudio>();
+        }
+
+        if (gameAudio == null)
+        {
+            gameAudio = gameObject.AddComponent<CozyGameAudio>();
+        }
+
+        gameAudio.lobbyMusicVolume = 0.30f;
+        gameAudio.gothicBirdVolume = 0.20f;
+        gameAudio.EnsureReady();
+        return gameAudio;
+    }
+
     private GameObject LoadFloorFinishPrefab()
     {
-#if UNITY_EDITOR
         string[] candidateNames = IsModernTheme() ? new[] { "MarbleTile", "ModernTile", "Tile" } : new[] { "WoodTile" };
         for (int i = 0; i < candidateNames.Length; i++)
         {
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(GetActiveDecorPrefabFolder() + "/" + candidateNames[i] + ".prefab");
+            string displayName;
+            GameObject prefab = LoadDecorPrefab(candidateNames[i], out displayName);
             if (prefab != null)
             {
                 return prefab;
             }
         }
-#endif
+
         return null;
     }
 
@@ -1228,10 +2025,14 @@ public sealed class CozyRestoreBootstrap : MonoBehaviour
     private GameObject LoadCleaningToolPrefab(string prefabName)
     {
 #if UNITY_EDITOR
-        return AssetDatabase.LoadAssetAtPath<GameObject>(CleaningToolPrefabFolder + "/" + prefabName + ".prefab");
-#else
-        return null;
+        GameObject editorPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(CleaningToolPrefabFolder + "/" + prefabName + ".prefab");
+        if (editorPrefab != null)
+        {
+            return editorPrefab;
+        }
 #endif
+
+        return Resources.Load<GameObject>(CleaningToolResourceFolder + "/" + prefabName);
     }
 
     private void CreateLighting(Transform root)

@@ -1,9 +1,6 @@
 ﻿using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 
 public sealed class CozyToolController : MonoBehaviour
 {
@@ -18,6 +15,7 @@ public sealed class CozyToolController : MonoBehaviour
     public GameObject floorMopVisualPrefab;
     public GameObject windowWiperVisualPrefab;
     public GameObject floorFinishPrefab;
+    public CozyGameAudio gameAudio;
     public float reach = 40f;
     public float cleanRate = 1.1f;
     public float paintRate = 0.7f;
@@ -60,8 +58,14 @@ public sealed class CozyToolController : MonoBehaviour
     private RollerVisualState paintRollerVisual;
     private RollerVisualState wetMopRollerVisual;
     private CozyCleaningAudio cleaningAudio;
+    private bool controlsGuideVisible = true;
+    private bool objectivesPanelVisible;
+    private bool pausePanelVisible;
+    private float lastNonZeroVolume = 1f;
+    private const string VolumePrefsKey = "CozyRestore.MasterVolume";
+    private const string WindowedPrefsKey = "CozyRestore.Windowed";
 
-    public bool BlocksRightMouseOrbit => false;
+    public bool BlocksRightMouseOrbit => controlsGuideVisible || pausePanelVisible;
 
     private sealed class RollerVisualState
     {
@@ -114,12 +118,32 @@ public sealed class CozyToolController : MonoBehaviour
             cleaningAudio = gameObject.AddComponent<CozyCleaningAudio>();
         }
         cleaningAudio.EnsureReady();
+        if (gameAudio == null)
+        {
+            gameAudio = FindObjectOfType<CozyGameAudio>();
+        }
+        lastNonZeroVolume = Mathf.Max(0.01f, PlayerPrefs.GetFloat(VolumePrefsKey, Mathf.Max(0.01f, AudioListener.volume)));
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
     }
 
     private void Update()
     {
+        HandleControlsGuideInput();
+        if (!controlsGuideVisible)
+        {
+            HandlePausePanelInput();
+        }
+
+        if (controlsGuideVisible || pausePanelVisible)
+        {
+            EndContinuousActions();
+            cleaningAudio?.StopLoop();
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+            return;
+        }
+
         pickedThisFrame = false;
         HandleModeKeys();
         if (!Input.GetMouseButton(0))
@@ -136,14 +160,36 @@ public sealed class CozyToolController : MonoBehaviour
 
     private void OnGUI()
     {
-        GUI.Box(new Rect(14, 14, 230, 66), "Cleaning Status");
-        GUI.Label(new Rect(24, 36, 210, 18), targetProgressLabel);
-        GUI.Label(new Rect(24, 55, 210, 18), "Tool: " + GetToolDisplayName(mode));
+        GUIStyle statusLabelStyle = new GUIStyle(GUI.skin.label);
+        statusLabelStyle.alignment = TextAnchor.MiddleLeft;
+        statusLabelStyle.clipping = TextClipping.Overflow;
+
+        GUI.Box(new Rect(14, 14, 230, 76), "Cleaning Status");
+        GUI.Label(new Rect(24, 34, 210, 24), targetProgressLabel, statusLabelStyle);
+        GUI.Label(new Rect(24, 58, 210, 24), "Tool: " + GetToolDisplayName(mode), statusLabelStyle);
 
         float progress = progressTracker != null ? progressTracker.NormalizedProgress : 0f;
-        GUI.Box(new Rect(14, 86, 230, 22), string.Empty);
-        GUI.Box(new Rect(22, 93, 214, 8), string.Empty);
-        GUI.Box(new Rect(22, 93, 214 * progress, 8), string.Empty);
+        GUI.Box(new Rect(14, 96, 230, 22), string.Empty);
+        GUI.Box(new Rect(22, 103, 214, 8), string.Empty);
+        GUI.Box(new Rect(22, 103, 214 * progress, 8), string.Empty);
+
+        if (controlsGuideVisible)
+        {
+            DrawControlsGuidePanel();
+            return;
+        }
+
+        if (pausePanelVisible)
+        {
+            DrawPausePanel();
+            return;
+        }
+
+        DrawObjectivesButton();
+        if (objectivesPanelVisible)
+        {
+            DrawObjectivesPanel();
+        }
 
         if (progress >= 0.999f)
         {
@@ -156,14 +202,266 @@ public sealed class CozyToolController : MonoBehaviour
         }
     }
 
+    private void HandleControlsGuideInput()
+    {
+        if (!controlsGuideVisible)
+        {
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.Return)
+            || Input.GetKeyDown(KeyCode.KeypadEnter)
+            || Input.GetKeyDown(KeyCode.Space)
+            || Input.GetKeyDown(KeyCode.Escape))
+        {
+            controlsGuideVisible = false;
+        }
+    }
+
+    private void HandlePausePanelInput()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            pausePanelVisible = !pausePanelVisible;
+            objectivesPanelVisible = false;
+        }
+    }
+
+    private void DrawPausePanel()
+    {
+        Rect screenRect = new Rect(0f, 0f, Screen.width, Screen.height);
+        Color previousColor = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.46f);
+        GUI.DrawTexture(screenRect, Texture2D.whiteTexture);
+        GUI.color = previousColor;
+
+        float panelWidth = Mathf.Min(360f, Screen.width - 40f);
+        float panelHeight = 250f;
+        Rect panelRect = new Rect((Screen.width - panelWidth) * 0.5f, (Screen.height - panelHeight) * 0.5f, panelWidth, panelHeight);
+
+        GUIStyle panelStyle = new GUIStyle(GUI.skin.box);
+        panelStyle.fontSize = 20;
+        panelStyle.fontStyle = FontStyle.Bold;
+        GUI.Box(panelRect, "옵션", panelStyle);
+
+        GUIStyle buttonStyle = new GUIStyle(GUI.skin.button);
+        buttonStyle.fontSize = 15;
+        buttonStyle.fontStyle = FontStyle.Bold;
+
+        float buttonX = panelRect.x + 42f;
+        float buttonWidth = panelRect.width - 84f;
+        float y = panelRect.y + 52f;
+
+        if (GUI.Button(new Rect(buttonX, y, buttonWidth, 34f), "게임 계속하기", buttonStyle))
+        {
+            pausePanelVisible = false;
+        }
+
+        y += 44f;
+        if (GUI.Button(new Rect(buttonX, y, buttonWidth, 34f), AudioListener.volume > 0.001f ? "볼륨 끄기" : "볼륨 켜기", buttonStyle))
+        {
+            ToggleGameVolume();
+        }
+
+        y += 44f;
+        bool isWindowed = Screen.fullScreenMode == FullScreenMode.Windowed;
+        if (GUI.Button(new Rect(buttonX, y, buttonWidth, 34f), isWindowed ? "전체화면으로 전환" : "창모드로 전환", buttonStyle))
+        {
+            ToggleWindowMode();
+        }
+
+        y += 44f;
+        if (GUI.Button(new Rect(buttonX, y, buttonWidth, 34f), "로비로 돌아가기", buttonStyle))
+        {
+            pausePanelVisible = false;
+            lobbyBootstrap?.ReturnToLobby();
+        }
+
+        GUIStyle hintStyle = new GUIStyle(GUI.skin.label);
+        hintStyle.alignment = TextAnchor.MiddleCenter;
+        hintStyle.fontSize = 12;
+        hintStyle.normal.textColor = new Color(0.80f, 0.86f, 0.90f);
+        GUI.Label(new Rect(panelRect.x + 18f, panelRect.y + panelRect.height - 28f, panelRect.width - 36f, 18f), "ESC를 다시 누르면 닫힙니다.", hintStyle);
+    }
+
+    private void ToggleGameVolume()
+    {
+        if (AudioListener.volume > 0.001f)
+        {
+            lastNonZeroVolume = Mathf.Max(0.01f, AudioListener.volume);
+            AudioListener.volume = 0f;
+        }
+        else
+        {
+            AudioListener.volume = Mathf.Clamp01(lastNonZeroVolume);
+        }
+
+        PlayerPrefs.SetFloat(VolumePrefsKey, AudioListener.volume);
+        PlayerPrefs.Save();
+    }
+
+    private void ToggleWindowMode()
+    {
+        bool nextWindowed = Screen.fullScreenMode != FullScreenMode.Windowed;
+        Screen.SetResolution(Screen.width, Screen.height, nextWindowed ? FullScreenMode.Windowed : FullScreenMode.FullScreenWindow);
+        PlayerPrefs.SetInt(WindowedPrefsKey, nextWindowed ? 1 : 0);
+        PlayerPrefs.Save();
+    }
+
     private void DrawCompletionLobbyButton()
     {
         GUIStyle buttonStyle = new GUIStyle(GUI.skin.button);
         buttonStyle.fontSize = 13;
         buttonStyle.fontStyle = FontStyle.Bold;
-        if (GUI.Button(new Rect(Screen.width - 110f, 18f, 92f, 32f), "로비", buttonStyle))
+        if (GUI.Button(new Rect(Screen.width - 110f, 56f, 92f, 32f), "로비", buttonStyle))
         {
             lobbyBootstrap?.ReturnToLobby();
+        }
+    }
+
+    private void DrawObjectivesButton()
+    {
+        GUIStyle buttonStyle = new GUIStyle(GUI.skin.button);
+        buttonStyle.fontSize = 13;
+        buttonStyle.fontStyle = FontStyle.Bold;
+        if (GUI.Button(new Rect(Screen.width - 110f, 18f, 92f, 32f), objectivesPanelVisible ? "목표 닫기" : "목표", buttonStyle))
+        {
+            objectivesPanelVisible = !objectivesPanelVisible;
+        }
+    }
+
+    private void DrawObjectivesPanel()
+    {
+        float panelWidth = 374f;
+        float panelHeight = 244f;
+        Rect panelRect = new Rect(Screen.width - panelWidth - 18f, 58f, panelWidth, panelHeight);
+
+        GUIStyle panelStyle = new GUIStyle(GUI.skin.box);
+        panelStyle.fontSize = 18;
+        panelStyle.fontStyle = FontStyle.Bold;
+        GUI.Box(panelRect, "목표", panelStyle);
+
+        bool obstacleDone = progressTracker != null && progressTracker.ObstaclesCleared;
+        bool surfaceDone = progressTracker != null && progressTracker.SurfaceWorkComplete;
+        bool floorFinishDone = IsFloorFinishObjectiveComplete();
+        bool decorDone = progressTracker != null && progressTracker.HasPlacedDecor;
+
+        float rowX = panelRect.x + 18f;
+        float rowY = panelRect.y + 42f;
+        float rowWidth = panelRect.width - 36f;
+        DrawObjectiveRow(new Rect(rowX, rowY, rowWidth, 40f), "1. 장애물 치우기", obstacleDone);
+        DrawObjectiveRow(new Rect(rowX, rowY + 44f, rowWidth, 48f), "2. 바닥 청소 / 창문 닦기 / 벽 페인트칠", surfaceDone);
+        DrawObjectiveRow(new Rect(rowX, rowY + 96f, rowWidth, 40f), "3. 바닥 타일깔기", floorFinishDone);
+        DrawObjectiveRow(new Rect(rowX, rowY + 140f, rowWidth, 40f), "4. 인테리어 배치", decorDone);
+    }
+
+    private void DrawObjectiveRow(Rect rect, string label, bool completed, string detail = null)
+    {
+        Color previousColor = GUI.color;
+        GUI.color = completed ? new Color(0.20f, 0.42f, 0.26f, 0.58f) : new Color(0.06f, 0.07f, 0.09f, 0.52f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        GUI.color = previousColor;
+
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
+        labelStyle.alignment = TextAnchor.MiddleLeft;
+        labelStyle.fontSize = rect.height > 42f ? 13 : 14;
+        labelStyle.fontStyle = FontStyle.Bold;
+        labelStyle.wordWrap = true;
+        labelStyle.normal.textColor = completed ? new Color(0.74f, 0.84f, 0.75f) : Color.white;
+
+        Rect labelRect = new Rect(rect.x + 12f, rect.y + 4f, rect.width - 96f, rect.height - 8f);
+        GUI.Label(labelRect, label, labelStyle);
+
+        if (!string.IsNullOrEmpty(detail) && !completed)
+        {
+            GUIStyle detailStyle = new GUIStyle(GUI.skin.label);
+            detailStyle.alignment = TextAnchor.LowerLeft;
+            detailStyle.fontSize = 11;
+            detailStyle.normal.textColor = new Color(0.78f, 0.84f, 0.90f);
+            GUI.Label(new Rect(labelRect.x, rect.y + rect.height - 18f, labelRect.width, 16f), detail, detailStyle);
+        }
+
+        if (completed)
+        {
+            GUI.color = new Color(0.82f, 1f, 0.80f, 0.95f);
+            GUI.DrawTexture(new Rect(labelRect.x, rect.y + rect.height * 0.50f, labelRect.width, 2f), Texture2D.whiteTexture);
+            GUI.color = previousColor;
+        }
+
+        GUIStyle doneStyle = new GUIStyle(GUI.skin.label);
+        doneStyle.alignment = TextAnchor.MiddleCenter;
+        doneStyle.fontSize = 12;
+        doneStyle.fontStyle = FontStyle.Bold;
+        doneStyle.normal.textColor = completed ? new Color(0.70f, 1f, 0.70f) : new Color(1f, 0.86f, 0.58f);
+        GUI.Label(new Rect(rect.xMax - 78f, rect.y + 4f, 66f, rect.height - 8f), completed ? "[완료]" : "진행중", doneStyle);
+    }
+
+    private bool IsFloorFinishObjectiveComplete()
+    {
+        return installedFloorFinishes.Count >= GetFloorFinishObjectiveRequiredCount();
+    }
+
+    private int GetFloorFinishObjectiveRequiredCount()
+    {
+        CozyMoppableFloor floor = FindObjectOfType<CozyMoppableFloor>();
+        if (floor == null)
+        {
+            return 1;
+        }
+
+        Vector2Int cellCounts = GetFloorFinishCellCounts(floor.transform.lossyScale, GetFloorFinishCellSize());
+        int totalCells = Mathf.Max(1, cellCounts.x * cellCounts.y);
+        return totalCells;
+    }
+
+    private void DrawControlsGuidePanel()
+    {
+        float panelWidth = Mathf.Min(520f, Screen.width - 40f);
+        float panelHeight = 356f;
+        Rect panelRect = new Rect((Screen.width - panelWidth) * 0.5f, (Screen.height - panelHeight) * 0.5f, panelWidth, panelHeight);
+
+        Color previousColor = GUI.color;
+        GUI.color = new Color(0f, 0f, 0f, 0.46f);
+        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+        GUI.color = previousColor;
+
+        GUIStyle panelStyle = new GUIStyle(GUI.skin.box);
+        panelStyle.fontSize = 22;
+        panelStyle.fontStyle = FontStyle.Bold;
+        panelStyle.normal.textColor = Color.white;
+        GUI.Box(panelRect, "조작 안내", panelStyle);
+
+        GUIStyle bodyStyle = new GUIStyle(GUI.skin.label);
+        bodyStyle.fontSize = 16;
+        bodyStyle.fontStyle = FontStyle.Bold;
+        bodyStyle.normal.textColor = new Color(0.96f, 0.97f, 1f);
+        bodyStyle.richText = true;
+        bodyStyle.wordWrap = true;
+
+        string guideText =
+            "<color=#ffd98a>1 ~ 7 숫자키</color> : 도구 변경\n" +
+            "<color=#ffd98a>마우스 좌클릭 / 드래그</color> : 청소, 페인트칠, 배치 실행\n" +
+            "<color=#ffd98a>마우스 우클릭 드래그</color> : 카메라 각도 변경\n" +
+            "<color=#ffd98a>마우스 휠</color> : 줌 인 / 줌 아웃\n" +
+            "<color=#ffd98a>W A S D</color> : 카메라 위치 이동\n" +
+            "<color=#ffd98a>Tab</color> : 브러시 또는 타일 방향 90도 회전\n" +
+            "<color=#ffd98a>Z / X</color> : 인테리어 종류 이전 / 다음 변경\n" +
+            "<color=#ffd98a>Q / E</color> : 인테리어 배치 방향 회전";
+
+        GUI.Label(new Rect(panelRect.x + 34f, panelRect.y + 58f, panelRect.width - 68f, 218f), guideText, bodyStyle);
+
+        GUIStyle hintStyle = new GUIStyle(GUI.skin.label);
+        hintStyle.alignment = TextAnchor.MiddleCenter;
+        hintStyle.fontSize = 13;
+        hintStyle.normal.textColor = new Color(0.78f, 0.84f, 0.90f);
+        GUI.Label(new Rect(panelRect.x + 28f, panelRect.y + panelRect.height - 74f, panelRect.width - 56f, 24f), "Enter / Space / Esc 로도 닫을 수 있습니다.", hintStyle);
+
+        GUIStyle buttonStyle = new GUIStyle(GUI.skin.button);
+        buttonStyle.fontSize = 16;
+        buttonStyle.fontStyle = FontStyle.Bold;
+        if (GUI.Button(new Rect(panelRect.center.x - 55f, panelRect.y + panelRect.height - 44f, 110f, 30f), "확인", buttonStyle))
+        {
+            controlsGuideVisible = false;
         }
     }
 
@@ -185,6 +483,18 @@ public sealed class CozyToolController : MonoBehaviour
         float totalWidth = modes.Length * slotSize + (modes.Length - 1) * spacing;
         float startX = (Screen.width - totalWidth) * 0.5f;
         float y = Screen.height - 92f;
+        GUIStyle toolLabelStyle = new GUIStyle(GUI.skin.label);
+        toolLabelStyle.alignment = TextAnchor.MiddleCenter;
+        toolLabelStyle.fontSize = 12;
+        toolLabelStyle.fontStyle = FontStyle.Bold;
+        toolLabelStyle.wordWrap = true;
+        toolLabelStyle.normal.textColor = Color.white;
+
+        GUIStyle numberStyle = new GUIStyle(GUI.skin.label);
+        numberStyle.alignment = TextAnchor.MiddleCenter;
+        numberStyle.fontSize = 13;
+        numberStyle.fontStyle = FontStyle.Bold;
+        numberStyle.normal.textColor = new Color(1f, 0.90f, 0.68f);
 
         for (int i = 0; i < modes.Length; i++)
         {
@@ -195,45 +505,9 @@ public sealed class CozyToolController : MonoBehaviour
                 GUI.Box(new Rect(slot.x - 4f, slot.y - 4f, slot.width + 8f, slot.height + 8f), string.Empty);
             }
 
-            Texture icon = GetToolIcon(modes[i]);
-            if (icon != null)
-            {
-                GUI.DrawTexture(new Rect(slot.x + 9f, slot.y + 6f, 40f, 32f), icon, ScaleMode.ScaleToFit, true);
-            }
-            else
-            {
-                GUI.Label(new Rect(slot.x + 6f, slot.y + 10f, slot.width - 12f, 22f), GetToolGlyph(modes[i]));
-            }
-
-            GUI.Label(new Rect(slot.x + 6f, slot.y + 38f, slot.width - 12f, 18f), (i + 1).ToString());
+            GUI.Label(new Rect(slot.x + 4f, slot.y + 8f, slot.width - 8f, 28f), GetToolGlyph(modes[i]), toolLabelStyle);
+            GUI.Label(new Rect(slot.x + 6f, slot.y + 38f, slot.width - 12f, 16f), (i + 1).ToString(), numberStyle);
         }
-    }
-
-    private Texture GetToolIcon(CozyToolMode toolMode)
-    {
-#if UNITY_EDITOR
-        GameObject source = null;
-        if (toolMode == CozyToolMode.Paint)
-        {
-            source = paintRollerVisualPrefab;
-        }
-        else if (toolMode == CozyToolMode.WetMop)
-        {
-            source = floorMopVisualPrefab;
-        }
-        else if (toolMode == CozyToolMode.WindowWiper)
-        {
-            source = windowWiperVisualPrefab;
-        }
-        else if (toolMode == CozyToolMode.Decorate && decorTemplates != null && decorTemplates.Length > 0)
-        {
-            source = decorTemplates[Mathf.Clamp(decorIndex, 0, decorTemplates.Length - 1)];
-        }
-
-        return source != null ? AssetPreview.GetAssetPreview(source) ?? AssetPreview.GetMiniThumbnail(source) : null;
-#else
-        return null;
-#endif
     }
 
     private string GetToolGlyph(CozyToolMode toolMode)
@@ -554,6 +828,7 @@ public sealed class CozyToolController : MonoBehaviour
                 ClearPreview();
                 previewInstance = Instantiate(movingDecor.gameObject);
                 previewInstance.name = "Decor Move Preview";
+                previewInstance.transform.SetParent(GetRuntimeObjectRoot(), true);
                 previewInstance.SetActive(true);
                 SetColliders(previewInstance, false);
                 previewIsHeldDecor = true;
@@ -645,6 +920,7 @@ public sealed class CozyToolController : MonoBehaviour
 
             if (mode == CozyToolMode.Move && movingDecor != null)
             {
+                movingDecor.transform.SetParent(GetRuntimeObjectRoot(), true);
                 movingDecor.transform.position = hit.point;
                 movingDecor.transform.rotation = CozyDecorTemplate.GetPlacementRotation(movingDecor.gameObject, decorYaw);
                 CozyDecorTemplate.SnapBottomToFloor(movingDecor.gameObject, hit.point.y);
@@ -657,6 +933,7 @@ public sealed class CozyToolController : MonoBehaviour
             {
                 GameObject placed = Instantiate(decorTemplates[decorIndex], hit.point, CozyDecorTemplate.GetPlacementRotation(decorTemplates[decorIndex], decorYaw));
                 placed.name = CurrentDecorName + " Placed";
+                placed.transform.SetParent(GetRuntimeObjectRoot(), true);
                 placed.SetActive(true);
                 CozyDecorTemplate.SnapBottomToFloor(placed, hit.point.y);
                 SetColliders(placed, true);
@@ -973,10 +1250,7 @@ public sealed class CozyToolController : MonoBehaviour
         {
             GameObject root = new GameObject("Installed Floor Finishes");
             floorFinishRoot = root.transform;
-            if (transform.root != null)
-            {
-                floorFinishRoot.SetParent(transform.root);
-            }
+            floorFinishRoot.SetParent(GetRuntimeObjectRoot(), true);
         }
 
         GameObject finish = floorFinishPrefab != null ? Instantiate(floorFinishPrefab) : GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -993,6 +1267,7 @@ public sealed class CozyToolController : MonoBehaviour
 
         installedFloorFinishes[cell] = finish;
         CozyFloorFinishPlacementFx.Play(finish);
+        gameAudio?.PlayFloorFinishInstall(IsModernFloorFinish());
         status = "Installed " + GetFloorFinishDisplayName();
     }
 
@@ -1203,6 +1478,7 @@ public sealed class CozyToolController : MonoBehaviour
 
         previewInstance = Instantiate(decorTemplates[decorIndex]);
         previewInstance.name = "Decor Placement Preview";
+        previewInstance.transform.SetParent(GetRuntimeObjectRoot(), true);
         previewIsHeldDecor = false;
         previewInstance.SetActive(false);
         SetColliders(previewInstance, false);
@@ -1213,6 +1489,11 @@ public sealed class CozyToolController : MonoBehaviour
         {
             lights[i].enabled = false;
         }
+    }
+
+    private Transform GetRuntimeObjectRoot()
+    {
+        return transform.root != null ? transform.root : transform;
     }
 
     private void SetColliders(GameObject target, bool enabled)

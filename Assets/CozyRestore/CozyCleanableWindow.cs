@@ -297,7 +297,7 @@ public static class CozyDirtMaskRenderer
 
     public static Material CreateMaskedSurfaceMaterial(Material cleanMaterial, Material dirtyMaterial, string materialName)
     {
-        Shader shader = Shader.Find("CozyRestore/MaskedSurface");
+        Shader shader = CozyRuntimeShaders.Find("CozyRestore/MaskedSurface", "MaskedSurface");
         Material material = new Material(shader != null ? shader : Shader.Find("Standard"));
         material.name = materialName;
 
@@ -317,7 +317,7 @@ public static class CozyDirtMaskRenderer
 
     public static Material CreateMaskedGlassMaterial(string materialName)
     {
-        Shader shader = Shader.Find("CozyRestore/MaskedGlass");
+        Shader shader = CozyRuntimeShaders.Find("CozyRestore/MaskedGlass", "MaskedGlass");
         Material material = new Material(shader != null ? shader : Shader.Find("Transparent/Diffuse"));
         material.name = materialName;
         material.SetColor("_CleanColor", new Color(0.80f, 0.94f, 1f, 0.14f));
@@ -414,7 +414,7 @@ public static class CozyDirtMaskRenderer
             return;
         }
 
-        Shader shader = Shader.Find("Hidden/CozyRestore/MaskBrush");
+        Shader shader = CozyRuntimeShaders.Find("Hidden/CozyRestore/MaskBrush", "MaskBrush");
         if (shader != null)
         {
             brushMaterial = new Material(shader);
